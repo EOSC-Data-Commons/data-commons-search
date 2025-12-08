@@ -1,8 +1,10 @@
 """HTTP API to deploy the EOSC Data Commons search agent."""
 
+import contextlib
 import json
+import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime, timezone
 
 from ag_ui.core import (
@@ -16,14 +18,16 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
+from fastapi import FastAPI
+from fastapi.exceptions import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.requests import Request
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from langchain.chat_models import BaseChatModel
 from langchain.messages import AnyMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp.types import TextContent
-from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
-from starlette.responses import FileResponse, StreamingResponse
-from starlette.staticfiles import StaticFiles
 
 from data_commons_search.config import settings
 from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
@@ -47,8 +51,23 @@ from data_commons_search.utils import (
     sse_event,
 )
 
-# Get the MCP server Starlette app, and mount our routes to it
-app = mcp.streamable_http_app()
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """FastAPI lifespan that initializes the MCP session manager."""
+    async with mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(
+    title="EOSC Data Commons Search API",
+    description="A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/) MatchMaker service, providing natural language search over open-access datasets. It exposes an HTTP POST endpoint and supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to help users discover datasets and tools via a Large Language Model-assisted search.",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.mount("/mcp", mcp.streamable_http_app(), name="mcp")
+
 
 if settings.cors_enabled:
     app.add_middleware(
@@ -73,8 +92,9 @@ logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{sett
 🔎 Using OpenSearch service on {BOLD}{settings.opensearch_url}{RESET}""")
 
 
-async def chat_handler(request: Request) -> StreamingResponse:
-    """Chat with the assistant main endpoint."""
+@app.post("/chat")
+async def chat_endpoint(request: Request, search_input: AgentInput) -> StreamingResponse:
+    """Natural language search."""
     auth_header = request.headers.get("Authorization", "")
     if settings.chat_api_key and (not auth_header or not auth_header.startswith("Bearer ")):
         raise ValueError("Missing or invalid Authorization header")
@@ -82,7 +102,7 @@ async def chat_handler(request: Request) -> StreamingResponse:
         raise ValueError("Invalid API key")
 
     return StreamingResponse(
-        stream_chat_response(AgentInput.model_validate(await request.json())),
+        stream_chat_response(search_input),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -93,25 +113,28 @@ async def chat_handler(request: Request) -> StreamingResponse:
 
 def get_timestamp() -> int:
     """Get the current UTC timestamp in seconds."""
-    return int(datetime.now(timezone.utc).timestamp())
+    return int(time.time())
+    # return int(datetime.now(timezone.utc).timestamp())
 
 
-async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]:
+async def stream_chat_response(search_input: AgentInput) -> AsyncGenerator[str, None]:
     """Stream the chat response with tool calls, reranking, and results."""
     msg_id = str(uuid.uuid4())
     token_usage = TokenUsageMetadata()
-    yield sse_event(RunStartedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
+    yield sse_event(
+        RunStartedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp())
+    )
     yield sse_event(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
 
     # Get tools from the MCP client
     tools = await mcp_client.get_tools()
 
     # Get model with tools for the initial query
-    llm = load_chat_model(request.model)
+    llm = load_chat_model(search_input.model)
     llm_with_tools = llm.bind_tools(tools)
 
     # Step 1: Call LLM to get tool calls
-    msgs = get_langchain_msgs(request.messages)
+    msgs = get_langchain_msgs(search_input.messages)
     tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *msgs])
     token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
 
@@ -225,7 +248,9 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
     # Step 3: If no results found or no tool calls, handle early exit
     if not tc_llm_resp.tool_calls or search_results.total_found == 0:
         yield sse_event(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
-        yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
+        yield sse_event(
+            RunFinishedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp())
+        )
         return
 
     # print(json.dumps(search_results.model_dump(), indent=2))
@@ -257,21 +282,20 @@ async def stream_chat_response(request: AgentInput) -> AsyncGenerator[str, None]
     )
     yield sse_event(ToolCallEndEvent(tool_call_id=rerank_tc_id, timestamp=get_timestamp()))
     yield sse_event(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
-    yield sse_event(RunFinishedEvent(thread_id=request.thread_id, run_id=request.run_id, timestamp=get_timestamp()))
+    yield sse_event(
+        RunFinishedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp())
+    )
     file_logger.info(
         json.dumps(
             {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "token_usage": token_usage.model_dump(),
-                "input": request.model_dump(),
+                "input": search_input.model_dump(),
                 "response": final_response.model_dump(),
             }
         )
     )
-    logger.info(f'/chat "{request.messages[-1].content}" | {token_usage.model_dump()}')
-
-
-app.router.add_route("/chat", chat_handler, methods=["POST"])
+    logger.info(f'/chat "{search_input.messages[-1].content}" | {token_usage.model_dump()}')
 
 
 async def rerank_search_results(
@@ -347,15 +371,25 @@ app.mount(
     name="static",
 )
 
+WEBAPP_HTML_PATH = "src/data_commons_search/webapp/index.html"
 
+
+@app.get("/")
 async def ui_handler(request: Request) -> FileResponse:
     """Serve the chat UI HTML file directly."""
-    return FileResponse("src/data_commons_search/webapp/index.html")
+    return FileResponse(WEBAPP_HTML_PATH)
 
 
-# Serve index.html for root and any other unmatched GET paths, so a SPA can handle routing
-app.router.add_route("/", ui_handler, methods=["GET"])
-app.router.add_route("/{path:path}", ui_handler, methods=["GET"])
+@app.get("/search")
+async def search_handler() -> FileResponse:
+    """Serve the chat UI HTML file for root path."""
+    return FileResponse(WEBAPP_HTML_PATH)
+
+
+@app.exception_handler(404)
+async def custom_404_handler(request: Request, exc: HTTPException) -> FileResponse:
+    """Handle 404 errors on the frontend."""
+    return FileResponse(WEBAPP_HTML_PATH)
 
 
 # In OpenSearch and Filemetrix: https://doi.org/10.17026/DANS-2B8-ZGY2

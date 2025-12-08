@@ -24,6 +24,7 @@ mcp = FastMCP(
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,
     stateless_http=True,
+    streamable_http_path="/",
 )
 
 embedding_model = TextEmbedding(settings.embedding_model)

@@ -40,13 +40,13 @@ dependencies = [
 
 [project.optional-dependencies]
 agent = [
-    "starlette >=0.48.0",
+    "fastapi >=0.123.0",
     "uvicorn[standard] >=0.38.0",
     "ag-ui-protocol >=0.1.9",
     "langchain >=1.0.2",
     "langchain-mcp-adapters >=0.1.10",
     "langchain-openai >=1.0.1",
-    "langchain-groq >=1.0.0",
+    # "langchain-mistralai >=1.0.1",
     # "langchain-huggingface", # This will install torch and many heavy nvidia dependencies
 ]
 gpu = [
