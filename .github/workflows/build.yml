@@ -22,7 +22,7 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
 
     - name: Set up Python ${{ matrix.python-version }}
       uses: astral-sh/setup-uv@v7
@@ -60,10 +60,10 @@ jobs:
       image-digest: ${{ steps.build.outputs.digest }}
       image-metadata: ${{ steps.meta.outputs.json }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Checkout frontend repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: EOSC-Data-Commons/eoscdcpoc
           path: eoscdcpoc
@@ -125,7 +125,7 @@ jobs:
     outputs:
       release_body: ${{ steps.git-cliff.outputs.content }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

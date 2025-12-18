@@ -103,13 +103,13 @@ Or using local folder for development:
 ### 📥 Install dev dependencies
 
 ```sh
-uv sync --extra agent
+uv sync --all-extras
 ```
 
 Install pre-commit hooks:
 
 ```sh
-uv run pre-commit install
+uv run --all-extras pre-commit install
 ```
 
 Create a `keys.env` file with your LLM provider API key(s):
@@ -125,7 +125,7 @@ OPENROUTER_API_KEY=YOUR_API_KEY
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
 
 ```sh
-uv run uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
+uv run --all-extras uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
 ```
 
 > Default `OPENSEARCH_URL=http://localhost:9200`
@@ -155,7 +155,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 
 > [!IMPORTANT]
 >
-> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker) run:
+> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker), which is expected to be alongside this project folder (in the same folder), run:
 >
 > ```sh
 > npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
