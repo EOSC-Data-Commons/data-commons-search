@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime, timezone
+from typing import Any
 
 from ag_ui.core import (
     RunFinishedEvent,
@@ -18,7 +19,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
@@ -29,6 +30,8 @@ from langchain.messages import AnyMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from mcp.types import TextContent
 
+from data_commons_search.auth import optional_auth, require_auth
+from data_commons_search.auth import router as auth_router
 from data_commons_search.config import settings
 from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
 from data_commons_search.mcp_server import mcp
@@ -93,13 +96,18 @@ logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{sett
 
 
 @app.post("/chat")
-async def chat_endpoint(request: Request, search_input: AgentInput) -> StreamingResponse:
+async def chat_endpoint(
+    request: Request, search_input: AgentInput, user: dict[str, Any] | None = Depends(optional_auth)
+) -> StreamingResponse:
     """Natural language search."""
     auth_header = request.headers.get("Authorization", "")
     if settings.chat_api_key and (not auth_header or not auth_header.startswith("Bearer ")):
         raise ValueError("Missing or invalid Authorization header")
     if settings.chat_api_key and auth_header.split(" ")[1] != settings.chat_api_key:
         raise ValueError("Invalid API key")
+
+    if user:
+        logger.info(f"loggedin! User: {user.get('preferred_username', user.get('sub'))}")
 
     return StreamingResponse(
         stream_chat_response(search_input),
@@ -364,6 +372,17 @@ async def rerank_search_results(
         )
 
 
+@app.get("/history")
+async def get_history(user: dict[str, Any] = Depends(require_auth)) -> list[dict[str, Any]]:
+    """Get chat history for the authenticated user.
+
+    Requires authentication.
+    """
+    logger.info(f"User {user.get('preferred_username', user.get('sub'))} requested history")
+    # TODO: Implement actual history retrieval from database
+    return []
+
+
 # Serve website built using vite
 app.mount(
     "/assets",
@@ -391,6 +410,8 @@ async def custom_404_handler(request: Request, exc: HTTPException) -> FileRespon
     """Handle 404 errors on the frontend."""
     return FileResponse(WEBAPP_HTML_PATH)
 
+
+app.include_router(auth_router)
 
 # In OpenSearch and Filemetrix: https://doi.org/10.17026/DANS-2B8-ZGY2
 # Data to Monitor Soil Aggregate Breakdown

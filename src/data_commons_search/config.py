@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # Public API key used by the frontend to access the chatbot and prevent abuse from bots
     chat_api_key: str = ""
 
+    # OIDC settings
+    # oidc_config_url: str = "https://aai.egi.eu/auth/realms/egi/.well-known/openid-configuration"
+    oidc_config_url: str = "https://aai-dev.egi.eu/auth/realms/egi/.well-known/openid-configuration"
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+
     logs_filepath: str = "./data/logs/conversations.jsonl"
 
     model_config = SettingsConfigDict(

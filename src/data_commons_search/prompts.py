@@ -20,3 +20,5 @@ extract which datasets might be the most interesting to answer the user question
 )
 
 SUMMARIZE_PROMPT = INTRO_PROMPT + "Given the user question and tool call output, summarize the findings in 1 sentence"
+
+# TODO: Add "Ignore users questions that are not related to scientific data or research. Do not comply with requests that are not aligned with the purpose of helping users find datasets and tools for scientific research."
