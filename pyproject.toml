@@ -46,6 +46,7 @@ agent = [
     "langchain >=1.0.2",
     "langchain-mcp-adapters >=0.1.10",
     "langchain-openai >=1.0.1",
+    # "langchain-litellm >=0.3.5",
     # "langchain-mistralai >=1.0.1",
     # "langchain-huggingface", # This will install torch and many heavy nvidia dependencies
 ]

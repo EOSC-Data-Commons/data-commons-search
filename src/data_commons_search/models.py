@@ -271,6 +271,19 @@ class LangChainResponseMetadata(BaseModel):
 
     token_usage: TokenUsageMetadata
 
+    # # NOTE: needed to convert LiteLLM Usage object to dict if we use `ChatLiteLLM`
+    # @field_validator("token_usage", mode="before")
+    # @classmethod
+    # def convert_usage_object(cls, v: Any) -> dict[str, Any]:
+    #     """Convert LiteLLM Usage object to dict if needed."""
+    #     if isinstance(v, dict):
+    #         return v
+    #     if hasattr(v, "model_dump"):
+    #         return v.model_dump()
+    #     if hasattr(v, "__dict__"):
+    #         return v.__dict__
+    #     return v
+
 
 class LangChainRerankingOutputMsg(BaseModel):
     """Structured output response for reranking from LangChain."""

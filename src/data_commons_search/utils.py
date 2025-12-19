@@ -13,6 +13,8 @@ from pydantic import BaseModel, SecretStr
 from data_commons_search.config import settings
 from data_commons_search.models import AgentMsg
 
+# from langchain_litellm import ChatLiteLLM
+
 # Disable logger in your code with `logging.getLogger("data_commons_search").setLevel(logging.WARNING)`
 logger = logging.getLogger("data_commons_search")
 logger.setLevel(logging.INFO)
@@ -91,7 +93,21 @@ def load_chat_model(model: str) -> BaseChatModel:
     provider, model_name = model.split("/", maxsplit=1)
 
     if provider == "einfracz":
-        # https://chat.ai.e-infra.cz
+        # LiteLLM API https://llm.ai.e-infra.cz
+        return ChatOpenAI(
+            base_url="https://llm.ai.e-infra.cz/v1",
+            model=model_name,
+            api_key=SecretStr(settings.einfracz_api_key),
+            max_completion_tokens=settings.llm_max_tokens,
+        )
+        # return ChatLiteLLM(
+        #     api_base="https://llm.ai.e-infra.cz/v1",
+        #     model=f"litellm_proxy/{model_name}",
+        #     api_key=settings.einfracz_api_key,
+        #     max_tokens=settings.llm_max_tokens,
+        # )
+    if provider == "einfraczowu":
+        # OpenWebUI API https://chat.ai.e-infra.cz
         return ChatOpenAI(
             base_url="https://llm.ai.e-infra.cz/v1",
             model=model_name,

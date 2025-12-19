@@ -133,7 +133,7 @@ uv run --all-extras uvicorn src.data_commons_search.main:app --log-config loggin
 Customize server configuration through environment variables:
 
 ```sh
-SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
+SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
 ```
 
 > [!TIP]
