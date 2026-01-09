@@ -202,10 +202,11 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
     response.set_cookie(
         key="access_token",
         value=access_token,
+        max_age=expires_in,
         httponly=True,
         secure=True,
         samesite="lax",
-        max_age=expires_in,
+        # domain=".eosc-data-commons.eu",
     )
 
     if refresh_token:

@@ -57,7 +57,7 @@ if settings.debug_enabled:
 #     logging.getLogger("mcp").setLevel(logging.WARNING)
 
 
-def sse_event(data: BaseModel) -> str:
+def sse(data: BaseModel) -> str:
     """Format data as a Server-Sent Events (SSE) event string."""
     return f"data: {data.model_dump_json()}\n\n"
 

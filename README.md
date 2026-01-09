@@ -122,19 +122,36 @@ OPENROUTER_API_KEY=YOUR_API_KEY
 
 ### ⚡️ Start dev server
 
-Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
+Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
 
 ```sh
-uv run --all-extras uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
+OPENSEARCH_URL=http://localhost:9200 uv run --all-extras uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
 ```
 
 > Default `OPENSEARCH_URL=http://localhost:9200`
 
-Customize server configuration through environment variables:
+Customize server port:
 
 ```sh
-SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
+OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
 ```
+
+> [!NOTE]
+>
+> You can deploy the `matchmaker` frontend in dev on the side pointing to this dev server:
+>
+> ```sh
+> cd ../matchmaker
+> VITE_BACKEND_API_URL=http://localhost:8000 npm run dev
+> ```
+
+> [!IMPORTANT]
+>
+> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker), which is expected to be alongside this project folder (in the same folder), run:
+>
+> ```sh
+> npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
+> ```
 
 > [!TIP]
 >
@@ -152,15 +169,6 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run --all-extras uvicor
 >- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
-
-> [!IMPORTANT]
->
-> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker), which is expected to be alongside this project folder (in the same folder), run:
->
-> ```sh
-> npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
-> ```
->
 
 ### 📦 Build for production
 
