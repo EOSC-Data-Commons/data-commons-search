@@ -28,6 +28,8 @@ from fastapi.staticfiles import StaticFiles
 from langchain.chat_models import BaseChatModel
 from langchain.messages import AnyMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langfuse import Langfuse
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from mcp.types import TextContent
 
 from data_commons_search.auth import optional_auth, require_auth
@@ -90,6 +92,11 @@ mcp_client = MultiServerMCPClient(
     }
 )
 
+# Initialize Langfuse client with host from settings (keys still come from env vars)
+langfuse = Langfuse(
+    host=settings.langfuse_host, public_key=settings.langfuse_public_key, secret_key=settings.langfuse_secret_key
+)
+
 logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{settings.server_url}{RESET}
 ⚡️ Streamable HTTP MCP server started on {BOLD}{settings.server_url}/mcp{RESET}
 🔎 Using OpenSearch service on {BOLD}{settings.opensearch_url}{RESET}""")
@@ -132,163 +139,188 @@ async def stream_chat_response(search_input: AgentInput) -> AsyncGenerator[str, 
     yield sse(RunStartedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()))
     yield sse(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
 
-    # Get tools from the MCP client
-    tools = await mcp_client.get_tools()
+    # Initialize Langfuse callback handler for LangChain
+    langfuse_handler = LangfuseCallbackHandler(update_trace=True)
 
-    # Get model with tools for the initial query
-    llm = load_chat_model(search_input.model)
-    llm_with_tools = llm.bind_tools(tools)
-
-    # Step 1: Call LLM to get tool calls
-    msgs = get_langchain_msgs(search_input.messages)
-    tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *msgs])
-    token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
-
-    if tc_llm_resp.content and isinstance(tc_llm_resp.content, str):
-        # If tc_llm_resp has text send it as a TextMessage content alongside tool calls
-        yield sse(
-            TextMessageChunkEvent(
-                delta=tc_llm_resp.content,
-                timestamp=get_timestamp(),
-            )
+    # Wrap the entire workflow in a single Langfuse trace
+    with langfuse.start_as_current_observation(
+        as_type="span",
+        name="data-commons-search",
+    ) as trace:
+        # Update trace with user input and metadata
+        trace.update_trace(
+            input={"messages": [m.model_dump() for m in search_input.messages]},
+            session_id=search_input.thread_id,
+            metadata={"model": search_input.model, "run_id": search_input.run_id},
         )
 
-    # Step 2: Execute each tool and collect search results and textual outputs
-    search_results = OpenSearchResults(total_found=0, hits=[])
-    tool_text_outputs: list[str] = []
-    async with mcp_client.session("data-commons-search") as session:
-        for tool_call in tc_llm_resp.tool_calls:
-            tool_call_id = tool_call["name"]
+        # Get tools from the MCP client
+        tools = await mcp_client.get_tools()
+
+        # Get model with tools for the initial query
+        llm = load_chat_model(search_input.model, callbacks=[langfuse_handler])
+        llm_with_tools = llm.bind_tools(tools)
+
+        # Step 1: Call LLM to get tool calls
+        msgs = get_langchain_msgs(search_input.messages)
+        tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *msgs])
+        token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
+
+        if tc_llm_resp.content and isinstance(tc_llm_resp.content, str):
+            # If tc_llm_resp has text send it as a TextMessage content alongside tool calls
             yield sse(
-                ToolCallStartEvent(
-                    tool_call_id=tool_call_id,
-                    tool_call_name=tool_call["name"],
-                    parent_message_id=msg_id,
+                TextMessageChunkEvent(
+                    delta=tc_llm_resp.content,
                     timestamp=get_timestamp(),
                 )
             )
-            yield sse(
-                ToolCallArgsEvent(
-                    tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"]), timestamp=get_timestamp()
-                )
-            )
-            tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
 
-            if tc_exec_res.structuredContent:
-                # Handle structured content, try to parse as `OpenSearchResults`
-                try:
-                    tool_results = OpenSearchResults(**tc_exec_res.structuredContent)
-                    search_results.hits.extend(tool_results.hits)
-                    search_results.total_found += tool_results.total_found
-                finally:
-                    tool_results_str = json.dumps(tc_exec_res.structuredContent)
+        # Step 2: Execute each tool and collect search results and textual outputs
+        search_results = OpenSearchResults(total_found=0, hits=[])
+        tool_text_outputs: list[str] = []
+        async with mcp_client.session("data-commons-search") as session:
+            for tool_call in tc_llm_resp.tool_calls:
+                tool_call_id = tool_call["name"]
+                yield sse(
+                    ToolCallStartEvent(
+                        tool_call_id=tool_call_id,
+                        tool_call_name=tool_call["name"],
+                        parent_message_id=msg_id,
+                        timestamp=get_timestamp(),
+                    )
+                )
+                yield sse(
+                    ToolCallArgsEvent(
+                        tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"]), timestamp=get_timestamp()
+                    )
+                )
+                tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
+
+                if tc_exec_res.structuredContent:
+                    # Handle structured content, try to parse as `OpenSearchResults`
+                    try:
+                        tool_results = OpenSearchResults(**tc_exec_res.structuredContent)
+                        search_results.hits.extend(tool_results.hits)
+                        search_results.total_found += tool_results.total_found
+                    finally:
+                        tool_results_str = json.dumps(tc_exec_res.structuredContent)
+                    yield sse(
+                        ToolCallResultEvent(
+                            message_id=msg_id,
+                            tool_call_id=tool_call_id,
+                            content=tool_results_str,
+                            role="tool",
+                            timestamp=get_timestamp(),
+                        )
+                    )
+                elif tc_exec_res.content:
+                    # Handle if text content is sent back
+                    for resp_content in tc_exec_res.content:
+                        if isinstance(resp_content, TextContent):
+                            # Stream the raw tool text back to the UI, and record it for fallback summarization
+                            yield sse(
+                                ToolCallResultEvent(
+                                    message_id=msg_id,
+                                    tool_call_id=tool_call_id,
+                                    content=resp_content.text,
+                                    role="tool",
+                                    timestamp=get_timestamp(),
+                                )
+                            )
+                            try:
+                                if resp_content.text:
+                                    tool_text_outputs.append(resp_content.text)
+                            except Exception as exc:
+                                logger.exception("Failed to record tool text output: %s", exc)
+
+                yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
+
+        # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
+        if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
+            summary_msgs: list[AnyMessage] = [
+                get_system_prompt(SUMMARIZE_PROMPT),
+                *msgs,
+                HumanMessage(
+                    content=(
+                        "The following tool outputs were produced when handling the user's query:\n\n"
+                        + "\n\n---\n\n".join(tool_text_outputs)
+                        + "\n\nPlease provide a concise summary for the user explaining what the tools returned and any recommendation or next steps."
+                    )
+                ),
+            ]
+            try:
+                fallback_tool_id = "search_summary"
+                yield sse(
+                    ToolCallStartEvent(
+                        tool_call_id=fallback_tool_id, tool_call_name=fallback_tool_id, parent_message_id=msg_id
+                    )
+                )
+                summary_resp = llm.invoke(summary_msgs)
+                token_usage += LangChainResponseMetadata.model_validate(summary_resp.response_metadata).token_usage
+                # Send the summary back as a ToolCallResult-like event so the UI can display it
+                # NOTE: use TextMessageChunkEvent?
                 yield sse(
                     ToolCallResultEvent(
                         message_id=msg_id,
-                        tool_call_id=tool_call_id,
-                        content=tool_results_str,
+                        tool_call_id=fallback_tool_id,
+                        content=str(summary_resp.content),
                         role="tool",
                         timestamp=get_timestamp(),
                     )
                 )
-            elif tc_exec_res.content:
-                # Handle if text content is sent back
-                for resp_content in tc_exec_res.content:
-                    if isinstance(resp_content, TextContent):
-                        # Stream the raw tool text back to the UI, and record it for fallback summarization
-                        yield sse(
-                            ToolCallResultEvent(
-                                message_id=msg_id,
-                                tool_call_id=tool_call_id,
-                                content=resp_content.text,
-                                role="tool",
-                                timestamp=get_timestamp(),
-                            )
-                        )
-                        try:
-                            if resp_content.text:
-                                tool_text_outputs.append(resp_content.text)
-                        except Exception as exc:
-                            logger.exception("Failed to record tool text output: %s", exc)
+                yield sse(ToolCallEndEvent(tool_call_id=fallback_tool_id))
+                trace.update_trace(output={"summary": str(summary_resp.content)})
+                return
+            except Exception as e:
+                logger.error(f"Fallback summarization failed: {e}")
 
-            yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
-
-    # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
-    if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
-        summary_msgs: list[AnyMessage] = [
-            get_system_prompt(SUMMARIZE_PROMPT),
-            *msgs,
-            HumanMessage(
-                content=(
-                    "The following tool outputs were produced when handling the user's query:\n\n"
-                    + "\n\n---\n\n".join(tool_text_outputs)
-                    + "\n\nPlease provide a concise summary for the user explaining what the tools returned and any recommendation or next steps."
-                )
-            ),
-        ]
-        try:
-            fallback_tool_id = "search_summary"
+        # Step 3: If no results found or no tool calls, handle early exit
+        if not tc_llm_resp.tool_calls or search_results.total_found == 0:
+            yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
             yield sse(
-                ToolCallStartEvent(
-                    tool_call_id=fallback_tool_id, tool_call_name=fallback_tool_id, parent_message_id=msg_id
+                RunFinishedEvent(
+                    thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()
                 )
             )
-            summary_resp = llm.invoke(summary_msgs)
-            token_usage += LangChainResponseMetadata.model_validate(summary_resp.response_metadata).token_usage
-            # Send the summary back as a ToolCallResult-like event so the UI can display it
-            # NOTE: use TextMessageChunkEvent?
-            yield sse(
-                ToolCallResultEvent(
-                    message_id=msg_id,
-                    tool_call_id=fallback_tool_id,
-                    content=str(summary_resp.content),
-                    role="tool",
-                    timestamp=get_timestamp(),
-                )
-            )
-            yield sse(ToolCallEndEvent(tool_call_id=fallback_tool_id))
+            trace.update_trace(output={"message": "No results found"})
             return
-        except Exception as e:
-            logger.error(f"Fallback summarization failed: {e}")
 
-    # Step 3: If no results found or no tool calls, handle early exit
-    if not tc_llm_resp.tool_calls or search_results.total_found == 0:
+        # print(json.dumps(search_results.model_dump(), indent=2))
+
+        # Step 4: Rerank search results using LLM with structured output
+        rerank_tc_id = "rerank_results"
+        yield sse(
+            ToolCallStartEvent(
+                tool_call_id=rerank_tc_id,
+                tool_call_name="rerank_results",
+                parent_message_id=msg_id,
+                timestamp=get_timestamp(),
+            )
+        )
+        final_response = await rerank_search_results(
+            llm,
+            msgs,
+            search_results,
+            token_usage,
+        )
+        yield sse(
+            ToolCallResultEvent(
+                message_id=msg_id,
+                tool_call_id=rerank_tc_id,
+                content=final_response.model_dump_json(by_alias=True),
+                role="tool",
+                timestamp=get_timestamp(),
+            )
+        )
+        yield sse(ToolCallEndEvent(tool_call_id=rerank_tc_id, timestamp=get_timestamp()))
         yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
         yield sse(
             RunFinishedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp())
         )
-        return
 
-    # print(json.dumps(search_results.model_dump(), indent=2))
+        # Update trace with final output
+        trace.update_trace(output=final_response.model_dump())
 
-    # Step 4: Rerank search results using LLM with structured output
-    rerank_tc_id = "rerank_results"
-    yield sse(
-        ToolCallStartEvent(
-            tool_call_id=rerank_tc_id,
-            tool_call_name="rerank_results",
-            parent_message_id=msg_id,
-            timestamp=get_timestamp(),
-        )
-    )
-    final_response = await rerank_search_results(
-        llm,
-        msgs,
-        search_results,
-        token_usage,
-    )
-    yield sse(
-        ToolCallResultEvent(
-            message_id=msg_id,
-            tool_call_id=rerank_tc_id,
-            content=final_response.model_dump_json(by_alias=True),
-            role="tool",
-            timestamp=get_timestamp(),
-        )
-    )
-    yield sse(ToolCallEndEvent(tool_call_id=rerank_tc_id, timestamp=get_timestamp()))
-    yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
-    yield sse(RunFinishedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()))
     file_logger.info(
         json.dumps(
             {

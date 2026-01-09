@@ -52,6 +52,11 @@ class Settings(BaseSettings):
 
     logs_filepath: str = "./data/logs/conversations.jsonl"
 
+    # Langfuse tracing (public/secret keys need to be set via env vars)
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+
     model_config = SettingsConfigDict(
         env_file="keys.env",
         env_file_encoding="utf-8",

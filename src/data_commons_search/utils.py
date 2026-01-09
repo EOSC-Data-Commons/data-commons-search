@@ -7,6 +7,7 @@ from datetime import datetime
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.callbacks import Callbacks
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
@@ -84,7 +85,7 @@ def get_langchain_msgs(msgs: list[AgentMsg]) -> list[AnyMessage]:
     return new_msgs
 
 
-def load_chat_model(model: str) -> BaseChatModel:
+def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     """Load a chat model from a fully specified name.
 
     Args:
@@ -99,6 +100,7 @@ def load_chat_model(model: str) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.einfracz_api_key),
             max_completion_tokens=settings.llm_max_tokens,
+            callbacks=callbacks,
         )
         # return ChatLiteLLM(
         #     api_base="https://llm.ai.e-infra.cz/v1",
@@ -106,13 +108,14 @@ def load_chat_model(model: str) -> BaseChatModel:
         #     api_key=settings.einfracz_api_key,
         #     max_tokens=settings.llm_max_tokens,
         # )
-    if provider == "einfraczowu":
+    if provider == "einfraczopenwebui":
         # OpenWebUI API https://chat.ai.e-infra.cz
         return ChatOpenAI(
             base_url="https://llm.ai.e-infra.cz/v1",
             model=model_name,
             api_key=SecretStr(settings.einfracz_api_key),
             max_completion_tokens=settings.llm_max_tokens,
+            callbacks=callbacks,
         )
 
     if provider == "openrouter":
@@ -122,6 +125,7 @@ def load_chat_model(model: str) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.openrouter_api_key),
             max_completion_tokens=settings.llm_max_tokens,
+            callbacks=callbacks,
             # default_headers={
             #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
             #     "X-Title": getenv("YOUR_SITE_NAME"),
@@ -182,6 +186,7 @@ def load_chat_model(model: str) -> BaseChatModel:
         model_provider=provider,
         timeout=None,
         max_retries=2,
+        callbacks=callbacks,
         # max_tokens=configuration.max_tokens,
         # temperature=configuration.temperature,
         # seed=configuration.seed,
