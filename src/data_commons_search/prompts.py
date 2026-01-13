@@ -16,7 +16,9 @@ If the user provides a simple question (just a word or concept), you should prio
 RERANK_PROMPT = (
     INTRO_PROMPT
     + """Given the user question and datasets retrieved from the search API, summarize the findings in 1 sentence,
-extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1."""
+extract which datasets might be the most interesting to answer the user question, and give them a relevance score between 0 and 1.
+
+If the question is too generic and would benefit from more details, in the summary asks for additional information the user could provide to narrow down the search results."""
 )
 
 SUMMARIZE_PROMPT = INTRO_PROMPT + "Given the user question and tool call output, summarize the findings in 1 sentence"

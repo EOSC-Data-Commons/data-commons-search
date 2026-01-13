@@ -39,11 +39,11 @@ from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
 from data_commons_search.mcp_server import mcp
 from data_commons_search.models import (
     AgentInput,
-    LangChainRerankingOutputMsg,
     LangChainResponseMetadata,
     OpenSearchResults,
     RankedSearchResponse,
     RerankingOutput,
+    RerankingOutputResponse,
     TokenUsageMetadata,
 )
 from data_commons_search.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
@@ -121,6 +121,7 @@ async def chat_endpoint(
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )
@@ -375,7 +376,7 @@ async def rerank_search_results(
     try:
         # Call LLM with structured output for reranking
         llm_structured_rerank = llm.with_structured_output(RerankingOutput, method="function_calling", include_raw=True)
-        rerank_resp = LangChainRerankingOutputMsg.model_validate(llm_structured_rerank.invoke(rerank_msgs))
+        rerank_resp = RerankingOutputResponse.model_validate(llm_structured_rerank.invoke(rerank_msgs))
         token_usage += LangChainResponseMetadata.model_validate(rerank_resp.raw.response_metadata).token_usage
 
         # Only keep the hits that were sent for reranking

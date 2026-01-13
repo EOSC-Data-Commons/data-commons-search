@@ -41,11 +41,6 @@ loggers:
     level: WARNING
     handlers: [default]
     propagate: False
-  # https://github.com/modelcontextprotocol/python-sdk/issues/1363
-  mcp.server.streamable_http:
-    level: CRITICAL
-    handlers: [default]
-    propagate: False
   opensearch:
     level: WARNING
     handlers: [default]

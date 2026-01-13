@@ -7,6 +7,28 @@ from pydantic import BaseModel, Field, computed_field
 
 from data_commons_search.config import settings
 
+# Chat agent input models
+
+
+class AgentMsg(BaseModel):
+    role: str  # Literal["user", "assistant", "system", "tool"]
+    content: str
+
+
+# class AgentInput(RunAgentInput): https://docs.ag-ui.com/sdk/python/core/types#runagentinput
+class AgentInput(BaseModel):
+    messages: list[AgentMsg]
+    model: str = settings.default_llm_model
+    thread_id: str = str(uuid.uuid4())
+    run_id: str = str(uuid.uuid4())
+    # NOTE: additional fields from RunAgentInput can be added if needed
+    # tools: list[Tool] = Field(default_factory=list)
+    # context: list[Context] = Field(default_factory=list)
+    # state: Any = None
+    # forwarded_props: Any = None
+    # messages: List[Message]
+
+
 # OpenSearch result models
 
 
@@ -156,6 +178,52 @@ class RerankingOutput(BaseModel):
     hits: list[RankedHit]
 
 
+class RerankingOutputResponse(BaseModel):
+    """Structured output response for reranking from LangChain."""
+
+    raw: AIMessage
+    parsed: RerankingOutput
+
+
+# Response metadata from LLM calls
+
+
+class TokenUsageMetadata(BaseModel):
+    """Metadata about LLM usage, e.g., token counts."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    def __iadd__(self, other: "TokenUsageMetadata") -> "TokenUsageMetadata":
+        """In-place add other usage counts into this instance and return self."""
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.total_tokens += other.total_tokens
+        self.reasoning_tokens += other.reasoning_tokens
+        return self
+
+
+class LangChainResponseMetadata(BaseModel):
+    """Metadata about a LangChain LLM response, e.g. LLM usage."""
+
+    token_usage: TokenUsageMetadata
+
+    # # NOTE: needed to convert LiteLLM Usage object to dict if we use `ChatLiteLLM`
+    # @field_validator("token_usage", mode="before")
+    # @classmethod
+    # def convert_usage_object(cls, v: Any) -> dict[str, Any]:
+    #     """Convert LiteLLM Usage object to dict if needed."""
+    #     if isinstance(v, dict):
+    #         return v
+    #     if hasattr(v, "model_dump"):
+    #         return v.model_dump()
+    #     if hasattr(v, "__dict__"):
+    #         return v.__dict__
+    #     return v
+
+
 # FileMetrix API response models
 
 
@@ -222,71 +290,3 @@ class FileMetrixFilesResponse(BaseModel):
     files: list[FileMetrixFileEntry] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
-
-
-# Chat agent input models
-
-
-class AgentMsg(BaseModel):
-    role: str  # Literal["user", "assistant", "system", "tool"]
-    content: str
-
-
-# class AgentInput(RunAgentInput): https://docs.ag-ui.com/sdk/python/core/types#runagentinput
-class AgentInput(BaseModel):
-    messages: list[AgentMsg]
-    model: str = settings.default_llm_model
-    thread_id: str = str(uuid.uuid4())
-    run_id: str = str(uuid.uuid4())
-    # NOTE: additional fields from RunAgentInput can be added if needed
-    # tools: list[Tool] = Field(default_factory=list)
-    # context: list[Context] = Field(default_factory=list)
-    # state: Any = None
-    # forwarded_props: Any = None
-    # messages: List[Message]
-
-
-# # Response metadata from LangChain LLM calls
-
-
-class TokenUsageMetadata(BaseModel):
-    """Metadata about LLM usage, e.g., token counts."""
-
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    reasoning_tokens: int = 0
-
-    def __iadd__(self, other: "TokenUsageMetadata") -> "TokenUsageMetadata":
-        """In-place add other usage counts into this instance and return self."""
-        self.prompt_tokens += other.prompt_tokens
-        self.completion_tokens += other.completion_tokens
-        self.total_tokens += other.total_tokens
-        self.reasoning_tokens += other.reasoning_tokens
-        return self
-
-
-class LangChainResponseMetadata(BaseModel):
-    """Metadata about a LangChain response, e.g. LLM usage."""
-
-    token_usage: TokenUsageMetadata
-
-    # # NOTE: needed to convert LiteLLM Usage object to dict if we use `ChatLiteLLM`
-    # @field_validator("token_usage", mode="before")
-    # @classmethod
-    # def convert_usage_object(cls, v: Any) -> dict[str, Any]:
-    #     """Convert LiteLLM Usage object to dict if needed."""
-    #     if isinstance(v, dict):
-    #         return v
-    #     if hasattr(v, "model_dump"):
-    #         return v.model_dump()
-    #     if hasattr(v, "__dict__"):
-    #         return v.__dict__
-    #     return v
-
-
-class LangChainRerankingOutputMsg(BaseModel):
-    """Structured output response for reranking from LangChain."""
-
-    raw: AIMessage
-    parsed: RerankingOutput
