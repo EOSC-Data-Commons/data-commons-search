@@ -112,6 +112,14 @@ def load_chat_model(model: str) -> BaseChatModel:
             # },
         )
 
+    # dashscope
+    if provider == "dashscope":
+        return ChatOpenAI(
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model=model_name,
+            api_key=SecretStr(settings.dashscope_api_key),
+            max_completion_tokens=settings.llm_max_tokens
+        )
     # if provider == "groq":
     #     # https://python.langchain.com/docs/integrations/chat/groq/
     #     from langchain_groq import ChatGroq
