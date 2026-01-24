@@ -118,6 +118,7 @@ Create a `keys.env` file with your LLM provider API key(s):
 EINFRACZ_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
 OPENROUTER_API_KEY=YOUR_API_KEY
+DASHSCOPE_API_KEY=YOUR_API_KEY
 ```
 
 ### ⚡️ Start dev server
@@ -148,7 +149,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 >
 > Recommended model per supported provider:
 >
-> - `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
+> - `einfracz/qwen3-coder` (`dashscope/qwen3-coder` if you have an account in dashscope platform) or `einfracz/gpt-oss-120b` (smaller, faster)
 >- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
@@ -178,6 +179,7 @@ Create a `keys.env` file with the API keys:
 EINFRACZ_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
 OPENROUTER_API_KEY=YOUR_API_KEY
+DASHSCOPE_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
 
