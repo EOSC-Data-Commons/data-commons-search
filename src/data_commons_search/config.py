@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 8192  # or 4096
     llm_seed: int = 42
 
+    # Custom LLM setting
+    use_custom_llm: bool = False
+    custom_llm_base_url: str = ""
+    custom_api_key: str = ""
+
     # The name of the application used for display
     app_name: str = "EOSC Data Commons MCP"
     # Public API key used by the frontend to access the chatbot and prevent abuse from bots

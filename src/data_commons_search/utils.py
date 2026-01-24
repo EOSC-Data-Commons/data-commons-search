@@ -89,7 +89,14 @@ def load_chat_model(model: str) -> BaseChatModel:
         fully_specified_name (str): String in the format 'provider/model'.
     """
     provider, model_name = model.split("/", maxsplit=1)
-
+    # If custom llm setting is used
+    if settings.use_custom_llm:
+        return ChatOpenAI(
+            base_url=settings.custom_llm_base_url,
+            model = model_name,
+            api_key=SecretStr(settings.custom_api_key),
+            max_completion_tokens=settings.llm_max_tokens
+        )
     if provider == "einfracz":
         # https://chat.ai.e-infra.cz
         return ChatOpenAI(
