@@ -7,14 +7,14 @@ import httpx
 from fastembed import TextEmbedding
 from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
-
+from online_embed import OnlineEmbedding
 from data_commons_search.config import settings
 from data_commons_search.models import (
     FileMetrixFilesResponse,
     OpenSearchResults,
     SearchHit,
 )
-from data_commons_search.utils import logger
+from data_commons_search.utils import logger, get_provider_model
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -25,8 +25,12 @@ mcp = FastMCP(
     json_response=True,
     stateless_http=True,
 )
-
-embedding_model = TextEmbedding(settings.embedding_model)
+# Setting up the embedding model
+if settings.use_online_embedding_model:
+    provider, model_name = get_provider_model(settings.embedding_model)
+    embedding_model = OnlineEmbedding(model_name, settings.embedding_api_key, settings.embedding_base_url)
+else:
+    embedding_model = TextEmbedding(settings.embedding_model)
 opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
 
 

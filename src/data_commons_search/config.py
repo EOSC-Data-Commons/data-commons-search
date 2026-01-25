@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 384  # 60MB
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
+    # Online embedding model setting:
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
 
     # LLM providers API keys
     default_llm_model: str = "einfracz/qwen3-coder"

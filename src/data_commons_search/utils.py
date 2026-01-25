@@ -81,6 +81,9 @@ def get_langchain_msgs(msgs: list[AgentMsg]) -> list[AnyMessage]:
             new_msgs.append(HumanMessage(content=msg.content))
     return new_msgs
 
+# Get provider name and model name
+def get_provider_model(model: str):
+    return model.split("/", maxsplit=1)
 
 def load_chat_model(model: str) -> BaseChatModel:
     """Load a chat model from a fully specified name.
@@ -88,7 +91,7 @@ def load_chat_model(model: str) -> BaseChatModel:
     Args:
         fully_specified_name (str): String in the format 'provider/model'.
     """
-    provider, model_name = model.split("/", maxsplit=1)
+    provider, model_name = get_provider_model(model)
     # If custom llm setting is used
     if settings.use_custom_llm:
         return ChatOpenAI(
@@ -122,7 +125,7 @@ def load_chat_model(model: str) -> BaseChatModel:
     # dashscope
     if provider == "dashscope":
         return ChatOpenAI(
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             model=model_name,
             api_key=SecretStr(settings.dashscope_api_key),
             max_completion_tokens=settings.llm_max_tokens

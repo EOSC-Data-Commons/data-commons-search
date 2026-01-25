@@ -121,6 +121,18 @@ OPENROUTER_API_KEY=YOUR_API_KEY
 DASHSCOPE_API_KEY=YOUR_API_KEY
 ```
 
+If you have your own LLM Platform, you can add this into your `key.env`: 
+
+```sh
+USE_CUSTOM_LLM=true
+CUSTOM_LLM_BASE_URL=YOUR_PLATFORM_BASE_URL
+CUSTOM_API_KEY=YOUR_API_KEY
+```
+
+> [!IMPORTANT] 
+>
+> The model name of the custom LLM should still be in `provider/model_name` format. 
+
 ### ⚡️ Start dev server
 
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp
@@ -149,8 +161,8 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 >
 > Recommended model per supported provider:
 >
-> - `einfracz/qwen3-coder` (`dashscope/qwen3-coder` if you have an account in dashscope platform) or `einfracz/gpt-oss-120b` (smaller, faster)
->- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
+> - `einfracz/qwen3-coder` (`dashscope/qwen3-coder-plus` if you have an account in **INTERNATIONAL** dashscope platform) or `einfracz/gpt-oss-120b` (smaller, faster)
+> - `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
 
