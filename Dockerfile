@@ -4,6 +4,14 @@ FROM ghcr.io/astral-sh/uv:python3.13-trixie-slim
 WORKDIR /app
 COPY . /app/
 
+# Arguments when building
+ARG UV_HTTP_TIMEOUT=120s
+ARG PYPI_INDEX_URL=https://pypi.org/simple
+
+# Setting env when building
+ENV UV_INDEX_URL=${PYPI_INDEX_URL}
+ENV UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT}
+
 RUN uv sync --frozen --extra agent
 
 ENV SERVER_PORT=8000
