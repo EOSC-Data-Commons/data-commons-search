@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List
 from langchain_openai import OpenAIEmbeddings
-from config import settings
+from data_commons_search.config import settings
 
 class OnlineEmbedding:
     def __init__(self, model_name: str, api_key: str, base_url: str):

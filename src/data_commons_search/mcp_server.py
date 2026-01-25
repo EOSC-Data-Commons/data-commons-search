@@ -7,7 +7,7 @@ import httpx
 from fastembed import TextEmbedding
 from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
-from online_embed import OnlineEmbedding
+from data_commons_search.online_embed import OnlineEmbedding
 from data_commons_search.config import settings
 from data_commons_search.models import (
     FileMetrixFilesResponse,

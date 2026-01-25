@@ -161,7 +161,7 @@ SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_co
 >
 > Recommended model per supported provider:
 >
-> - `einfracz/qwen3-coder` (`dashscope/qwen3-coder-plus` if you have an account in **INTERNATIONAL** dashscope platform) or `einfracz/gpt-oss-120b` (smaller, faster)
+> - `einfracz/qwen3-coder` (`dashscope/qwen3-coder` if you have an account in **INTERNATIONAL** dashscope platform) or `einfracz/gpt-oss-120b` (smaller, faster)
 > - `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`

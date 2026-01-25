@@ -12,6 +12,7 @@ from pydantic import BaseModel, SecretStr
 
 from data_commons_search.config import settings
 from data_commons_search.models import AgentMsg
+import logging
 
 # Disable logger in your code with `logging.getLogger("data_commons_search").setLevel(logging.WARNING)`
 logger = logging.getLogger("data_commons_search")
@@ -92,6 +93,7 @@ def load_chat_model(model: str) -> BaseChatModel:
         fully_specified_name (str): String in the format 'provider/model'.
     """
     provider, model_name = get_provider_model(model)
+    logging.info(f"Use {provider}'s {model_name}")
     # If custom llm setting is used
     if settings.use_custom_llm:
         return ChatOpenAI(

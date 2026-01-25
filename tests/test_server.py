@@ -28,6 +28,7 @@ server_port = 8001
 llm_models = [
     "einfracz/gpt-oss-120b",
     "einfracz/qwen3-coder",
+    "dashscope/qwen3-coder"
 ]
 
 test_items: list[TestItem] = [
