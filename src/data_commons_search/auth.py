@@ -126,7 +126,7 @@ async def auth_login(request: Request) -> RedirectResponse:
     params = {
         "client_id": settings.oidc_client_id,
         "response_type": "code",
-        "scope": "openid email profile",
+        "scope": "openid email profile voperson_id",
         "redirect_uri": str(request.base_url).rstrip("/") + "/auth/callback",
         "state": state,
         "code_challenge": code_challenge,
@@ -225,6 +225,7 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
     logger.info(
         f"User authenticated successfully via OIDC. Access token: {access_token} \nRefresh token: {refresh_token}"
     )
+    # logger.info(tokens)
     return response
 
 
@@ -253,6 +254,7 @@ async def auth_logout(request: Request) -> RedirectResponse:
 @router.get("/auth/user")
 async def auth_user(user: dict[str, Any] | None = Depends(optional_auth)) -> dict[str, Any]:
     """Get current authenticated user info."""
+    # print(user)
     if user is None:
         return {"authenticated": False}
     return {"authenticated": True, "user": user}

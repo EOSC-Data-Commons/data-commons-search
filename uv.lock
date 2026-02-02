@@ -515,7 +515,7 @@ requires-dist = [
     { name = "langchain-mcp-adapters", marker = "extra == 'agent'", specifier = ">=0.2.1" },
     { name = "langchain-openai", marker = "extra == 'agent'", specifier = ">=1.1.6" },
     { name = "langfuse", marker = "extra == 'agent'", specifier = ">=3.11.2" },
-    { name = "mcp", specifier = ">=1.25.0" },
+    { name = "mcp", specifier = ">=1.25.0,<2" },
     { name = "opensearch-py", specifier = ">=3.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },

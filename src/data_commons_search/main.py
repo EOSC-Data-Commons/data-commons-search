@@ -94,7 +94,7 @@ mcp_client = MultiServerMCPClient(
 
 # Initialize Langfuse client with host from settings (keys still come from env vars)
 langfuse = Langfuse(
-    host=settings.langfuse_host, public_key=settings.langfuse_public_key, secret_key=settings.langfuse_secret_key
+    host=settings.langfuse_base_url, public_key=settings.langfuse_public_key, secret_key=settings.langfuse_secret_key
 )
 
 logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{settings.server_url}{RESET}
