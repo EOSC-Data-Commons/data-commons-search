@@ -5,7 +5,7 @@ WORKDIR /app
 COPY . /app/
 
 # Arguments when building
-ARG UV_HTTP_TIMEOUT=120s
+ARG UV_HTTP_TIMEOUT=120
 ARG PYPI_INDEX_URL=https://pypi.org/simple
 
 # Setting env when building
