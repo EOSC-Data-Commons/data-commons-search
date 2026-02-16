@@ -35,7 +35,7 @@ opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
 
 
 @mcp.tool()
-async def search_datasets(
+async def search_data(
     search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
 ) -> OpenSearchResults:
     """Search for datasets relevant to the user question.

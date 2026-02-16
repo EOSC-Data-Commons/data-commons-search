@@ -140,9 +140,6 @@ async def stream_chat_response(search_input: AgentInput) -> AsyncGenerator[str, 
     yield sse(RunStartedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()))
     yield sse(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
 
-    # Initialize Langfuse callback handler for LangChain
-    langfuse_handler = LangfuseCallbackHandler(update_trace=True)
-
     # Wrap the entire workflow in a single Langfuse trace
     with langfuse.start_as_current_observation(
         as_type="span",
@@ -154,6 +151,9 @@ async def stream_chat_response(search_input: AgentInput) -> AsyncGenerator[str, 
             session_id=search_input.thread_id,
             metadata={"model": search_input.model, "run_id": search_input.run_id},
         )
+
+        # Initialize Langfuse callback handler inside the context so it inherits the current trace
+        langfuse_handler = LangfuseCallbackHandler()
 
         # Get tools from the MCP client
         tools = await mcp_client.get_tools()
