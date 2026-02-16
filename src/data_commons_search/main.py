@@ -32,7 +32,7 @@ from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from mcp.types import TextContent
 
-from data_commons_search.auth import optional_auth, require_auth
+from data_commons_search.auth import apply_pending_auth_cookies, optional_auth, require_auth
 from data_commons_search.auth import router as auth_router
 from data_commons_search.config import settings
 from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
@@ -116,7 +116,7 @@ async def chat_endpoint(
     if user:
         logger.info(f"loggedin! User: {user.get('preferred_username', user.get('sub'))}")
 
-    return StreamingResponse(
+    response = StreamingResponse(
         stream_chat_response(search_input),
         media_type="text/event-stream",
         headers={
@@ -125,6 +125,9 @@ async def chat_endpoint(
             "X-Accel-Buffering": "no",
         },
     )
+    # Make sure refreshed auth cookies are applied to the streaming response
+    apply_pending_auth_cookies(request, response)
+    return response
 
 
 def get_timestamp() -> int:
