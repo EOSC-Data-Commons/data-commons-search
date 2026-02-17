@@ -19,10 +19,8 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import Depends, FastAPI
-from fastapi.exceptions import HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.requests import Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.chat_models import BaseChatModel
@@ -47,6 +45,7 @@ from data_commons_search.models import (
     TokenUsageMetadata,
 )
 from data_commons_search.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
+from data_commons_search.rate_limit import RateLimiter
 from data_commons_search.utils import (
     file_logger,
     get_langchain_msgs,
@@ -56,12 +55,18 @@ from data_commons_search.utils import (
     sse,
 )
 
+rate_limiter = RateLimiter(settings.redis_url)
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager."""
-    async with mcp.session_manager.run():
-        yield
+    await rate_limiter.init()
+    try:
+        async with mcp.session_manager.run():
+            yield
+    finally:
+        await rate_limiter.aclose()
 
 
 app = FastAPI(
@@ -107,6 +112,8 @@ async def chat_endpoint(
     request: Request, search_input: AgentInput, user: dict[str, Any] | None = Depends(optional_auth)
 ) -> StreamingResponse:
     """Natural language search."""
+    await rate_limiter.check(request, user)
+
     auth_header = request.headers.get("Authorization", "")
     if settings.chat_api_key and (not auth_header or not auth_header.startswith("Bearer ")):
         raise ValueError("Missing or invalid Authorization header")

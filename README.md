@@ -127,6 +127,7 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 
 OPENSEARCH_URL=http://localhost:9200
+REDIS_URL=redis://localhost:6379
 ```
 
 ### ⚡️ Start dev server

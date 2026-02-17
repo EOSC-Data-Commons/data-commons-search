@@ -36,6 +36,7 @@ dependencies = [
     "httpx >=0.28.1",
     "fastembed >=0.7.4",
     "opensearch-py >=3.0.0",
+    "redis >=7.2.0",
 ]
 
 [project.optional-dependencies]

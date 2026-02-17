@@ -23,8 +23,9 @@ class Settings(BaseSettings):
 
     # OpenSearch settings
     opensearch_index: str = "test_datacite"
-    opensearch_url: str = "http://localhost:9200"
-    # opensearch_url: str = "http://opensearch:9200"
+    # opensearch_url: str = "http://localhost:9200"
+    opensearch_url: str = "http://opensearch:9200"
+    redis_url: str = "redis://broker:6379"
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"
