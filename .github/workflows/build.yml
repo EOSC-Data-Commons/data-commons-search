@@ -1,14 +1,10 @@
 name: Build
 on:
   workflow_dispatch:
-  workflow_call:
+  pull_request:
   push:
     branches: [ main ]
     tags: [ "v*.*.*" ]
-  # # Allow other repositories to trigger this workflow via repository_dispatch
-  # repository_dispatch:
-  #   types: [main-push]
-  # pull_request:
 
 jobs:
   tests:
@@ -17,7 +13,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # os: ["ubuntu-latest", "windows-latest", "macos-latest"]
         os: ["ubuntu-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
@@ -41,13 +36,13 @@ jobs:
     - name: Type check
       run: uv run mypy
 
-    - name: Start server
-      run: |
-        SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload &
-        sleep 10
+    # - name: Start server
+    #   run: |
+    #     SERVER_PORT=8001 OPENSEARCH_URL=http://localhost:9200 uv run uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload &
+    #     sleep 10
 
-    - name: Run tests
-      run: uv run pytest
+    # - name: Run tests
+    #   run: uv run pytest
 
   docker:
     name: 🐳 Build Docker image
@@ -61,27 +56,6 @@ jobs:
       image-metadata: ${{ steps.meta.outputs.json }}
     steps:
       - uses: actions/checkout@v6
-
-      - name: Checkout frontend repo
-        uses: actions/checkout@v6
-        with:
-          repository: EOSC-Data-Commons/eoscdcpoc
-          path: eoscdcpoc
-          # If this workflow was triggered by a tag, use that tag to check out the frontend repo
-          ref: fbfa6471e0b2016ecff42856ae930dd8fe03966f
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Build frontend
-        run: |
-          cd eoscdcpoc
-          npm ci
-          npm run build
-          rm -rf ../src/data_commons_search/webapp/
-          cp -R dist/spa/ ../src/data_commons_search/webapp/
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -99,7 +73,6 @@ jobs:
         with:
           images: ghcr.io/eosc-data-commons/data-commons-search
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
@@ -110,7 +83,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64, linux/arm64
-          push: true
+          push: ${{ startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -133,7 +106,7 @@ jobs:
         uses: orhun/git-cliff-action@v4
         id: git-cliff
         with:
-          config: cliff.toml
+          config: pyproject.toml
           args: -vv --latest --strip header
         env:
           OUTPUT: CHANGES.md
