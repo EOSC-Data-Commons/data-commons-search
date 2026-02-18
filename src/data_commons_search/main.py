@@ -30,7 +30,7 @@ from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from mcp.types import TextContent
 
-from data_commons_search.auth import apply_pending_auth_cookies, optional_auth, require_auth
+from data_commons_search.auth import UserInfo, apply_pending_auth_cookies, optional_auth, require_auth
 from data_commons_search.auth import router as auth_router
 from data_commons_search.config import settings
 from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
@@ -109,7 +109,7 @@ logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{sett
 
 @app.post("/chat")
 async def chat_endpoint(
-    request: Request, search_input: AgentInput, user: dict[str, Any] | None = Depends(optional_auth)
+    request: Request, search_input: AgentInput, user: UserInfo | None = Depends(optional_auth)
 ) -> StreamingResponse:
     """Natural language search."""
     await rate_limiter.check(request, user)
@@ -121,7 +121,7 @@ async def chat_endpoint(
         raise ValueError("Invalid API key")
 
     if user:
-        logger.info(f"loggedin! User: {user.get('preferred_username', user.get('sub'))}")
+        logger.info(f"loggedin! User: {user.preferred_username or user.sub}")
 
     response = StreamingResponse(
         stream_chat_response(search_input),
@@ -412,12 +412,12 @@ async def rerank_search_results(
 
 
 @app.get("/history")
-async def get_history(user: dict[str, Any] = Depends(require_auth)) -> list[dict[str, Any]]:
+async def get_history(user: UserInfo = Depends(require_auth)) -> list[dict[str, Any]]:
     """Get chat history for the authenticated user.
 
     Requires authentication.
     """
-    logger.info(f"User {user.get('preferred_username', user.get('sub'))} requested history")
+    logger.info(f"User {user.preferred_username or user.sub} requested history")
     # TODO: Implement actual history retrieval from database
     return []
 

@@ -1,10 +1,10 @@
 import math
 from inspect import isawaitable
-from typing import Any
 
 import redis.asyncio as aioredis
 from fastapi import HTTPException, Request
 
+from data_commons_search.auth import UserInfo
 from data_commons_search.utils import logger
 
 INTERVAL_SEC_AUTH = 1.0
@@ -43,14 +43,14 @@ class RateLimiter:
             return
         await self._redis.aclose()
 
-    async def check(self, request: Request, user: dict[str, Any] | None) -> None:
+    async def check(self, request: Request, user: UserInfo | None) -> None:
         """Check if the request is allowed under the rate limit. Raises `HTTPException` if not."""
         if self._redis is None:
             return
 
         if user:
             # TODO: check the right field
-            key = f"auth:{user.get('sub', 'unknown')!s}"
+            key = f"auth:{user.sub}"
             interval_seconds = INTERVAL_SEC_AUTH
         else:
             client_host = request.client.host if request.client else "unknown"

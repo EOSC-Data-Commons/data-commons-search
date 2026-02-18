@@ -12,6 +12,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import OpenIdConnect
+from pydantic import BaseModel, ConfigDict
 
 from data_commons_search.config import settings
 from data_commons_search.utils import logger
@@ -29,6 +30,14 @@ oidc_scheme = OpenIdConnect(
 
 DEFAULT_EXPIRY = 3600  # 1 hour
 DEFAULT_REFRESH_EXPIRY = 2592000  # 30 * 24 * 3600 = 30 days
+
+
+class UserInfo(BaseModel):
+    sub: str
+    email: str
+    name: str | None = None
+    preferred_username: str | None = None
+    model_config = ConfigDict(extra="allow")
 
 
 async def get_oidc_config() -> dict[str, Any]:
@@ -70,7 +79,7 @@ def _set_auth_cookies(
         )
 
 
-async def _fetch_userinfo(access_token: str) -> tuple[dict[str, Any] | None, int | None]:
+async def _fetch_userinfo(access_token: str) -> tuple[UserInfo | None, int | None]:
     """Fetch userinfo for the given access token.
 
     Returns:
@@ -84,7 +93,7 @@ async def _fetch_userinfo(access_token: str) -> tuple[dict[str, Any] | None, int
             headers={"Authorization": f"Bearer {access_token}"},
         )
         if resp.status_code == 200:
-            return resp.json(), resp.status_code
+            return UserInfo(**resp.json()), resp.status_code
         return None, resp.status_code
 
 
@@ -115,7 +124,7 @@ async def _refresh_access_token(refresh_token: str) -> dict[str, Any] | None:
         return resp.json()
 
 
-async def get_current_user(request: Request, response: Response) -> dict[str, Any] | None:
+async def get_current_user(request: Request, response: Response) -> UserInfo | None:
     """Extract current user from access token cookie.
 
     Returns user info dict if authenticated, None otherwise.
@@ -189,7 +198,7 @@ async def require_auth(
     request: Request,
     response: Response,
     token: str | None = Depends(oidc_scheme),
-) -> dict[str, Any]:
+) -> UserInfo:
     """Dependency that requires authentication.
 
     Raises HTTPException if not authenticated.
@@ -209,7 +218,7 @@ async def optional_auth(
     request: Request,
     response: Response,
     token: str | None = Depends(oidc_scheme),
-) -> dict[str, Any] | None:
+) -> UserInfo | None:
     """Dependency that optionally extracts user info.
 
     Returns user info if authenticated, None otherwise.
@@ -329,10 +338,9 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
     # Clear the state and PKCE cookies
     response.delete_cookie(key="oauth_state")
     response.delete_cookie(key="pkce_verifier")
-    logger.info(
-        f"User authenticated successfully via OIDC. Access token: {tokens.get('access_token')} \nRefresh token: {tokens.get('refresh_token')}"
-    )
+    logger.info(f"User authenticated successfully via OIDC.\nRefresh token: {tokens.get('refresh_token')}")
     logger.info(tokens)
+    # logger.info(await _fetch_userinfo(tokens.get("access_token")))
     return response
 
 
