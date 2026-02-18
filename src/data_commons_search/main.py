@@ -19,10 +19,9 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.chat_models import BaseChatModel
 from langchain.messages import AnyMessage, HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -112,6 +111,8 @@ async def chat_endpoint(
     request: Request, search_input: AgentInput, user: UserInfo | None = Depends(optional_auth)
 ) -> StreamingResponse:
     """Natural language search."""
+    if user:
+        logger.info(f"Logged in with user: {user.preferred_username or user.sub}")
     await rate_limiter.check(request, user)
 
     auth_header = request.headers.get("Authorization", "")
@@ -119,9 +120,6 @@ async def chat_endpoint(
         raise ValueError("Missing or invalid Authorization header")
     if settings.chat_api_key and auth_header.split(" ")[1] != settings.chat_api_key:
         raise ValueError("Invalid API key")
-
-    if user:
-        logger.info(f"loggedin! User: {user.preferred_username or user.sub}")
 
     response = StreamingResponse(
         stream_chat_response(search_input),
@@ -422,35 +420,41 @@ async def get_history(user: UserInfo = Depends(require_auth)) -> list[dict[str, 
     return []
 
 
-# Serve website built using vite
-app.mount(
-    "/assets",
-    StaticFiles(directory="src/data_commons_search/webapp/assets"),
-    name="static",
-)
-
-WEBAPP_HTML_PATH = "src/data_commons_search/webapp/index.html"
-
-
-@app.get("/")
-async def ui_handler(request: Request) -> FileResponse:
-    """Serve the chat UI HTML file directly."""
-    return FileResponse(WEBAPP_HTML_PATH)
-
-
-@app.get("/search")
-async def search_handler() -> FileResponse:
-    """Serve the chat UI HTML file for root path."""
-    return FileResponse(WEBAPP_HTML_PATH)
-
-
-@app.exception_handler(404)
-async def custom_404_handler(request: Request, exc: HTTPException) -> FileResponse:
-    """Handle 404 errors on the frontend."""
-    return FileResponse(WEBAPP_HTML_PATH)
+@app.get("/", include_in_schema=False)
+async def root_redirect() -> RedirectResponse:
+    """Redirect root path to the Swagger UI /docs."""
+    return RedirectResponse(url="/docs")
 
 
 app.include_router(auth_router)
+
+
+# # NOTE: deprecated -Serve website built using vite
+# app.mount(
+#     "/assets",
+#     StaticFiles(directory="src/data_commons_search/webapp/assets"),
+#     name="static",
+# )
+
+# WEBAPP_HTML_PATH = "src/data_commons_search/webapp/index.html"
+
+# @app.get("/")
+# async def ui_handler(request: Request) -> FileResponse:
+#     """Serve the chat UI HTML file directly."""
+#     return FileResponse(WEBAPP_HTML_PATH)
+
+
+# @app.get("/search")
+# async def search_handler() -> FileResponse:
+#     """Serve the chat UI HTML file for root path."""
+#     return FileResponse(WEBAPP_HTML_PATH)
+
+
+# @app.exception_handler(404)
+# async def custom_404_handler(request: Request, exc: HTTPException) -> FileResponse:
+#     """Handle 404 errors on the frontend."""
+#     return FileResponse(WEBAPP_HTML_PATH)
+
 
 # In OpenSearch and Filemetrix: https://doi.org/10.17026/DANS-2B8-ZGY2
 # Data to Monitor Soil Aggregate Breakdown

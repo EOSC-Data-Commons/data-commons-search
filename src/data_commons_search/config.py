@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # opensearch_url: str = "http://localhost:9200"
     opensearch_url: str = "http://opensearch:9200"
     redis_url: str = "redis://broker:6379"
+    postgres_url: str = "postgresql://postgres:postgres@postgres:5432/appDB"
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"

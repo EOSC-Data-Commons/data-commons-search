@@ -128,6 +128,7 @@ LANGFUSE_SECRET_KEY=
 
 OPENSEARCH_URL=http://localhost:9200
 REDIS_URL=redis://localhost:6379
+POSTGRES_URL=postgresql://user:password@localhost:5432/appDB
 ```
 
 ### ⚡️ Start dev server
@@ -168,15 +169,22 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > Example `curl` request:
 >
 > ```sh
-> curl -X POST http://localhost:8000/chat \
-> 	-H "Content-Type: application/json" -H "Authorization: SECRET_KEY" \
+> curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
+> 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
+> ```
+>
+> With logged in user access token:
+>
+> ```sh
+> curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
+>   -H "Cookie: access_token=$ACCESS_TOKEN" \
 > 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
 > ```
 >
 > Recommended model per supported provider:
 >
 > - `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
->- `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
+> - `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
 > - `groq/moonshotai/kimi-k2-instruct`
 > - `openai/gpt-4.1`
 

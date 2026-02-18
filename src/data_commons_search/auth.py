@@ -129,6 +129,17 @@ async def get_current_user(request: Request, response: Response) -> UserInfo | N
 
     Returns user info dict if authenticated, None otherwise.
     """
+    # # TODO: support Bearer token in Authorization header?
+    # auth_header = request.headers.get("authorization")
+    # if auth_header and auth_header.startswith("Bearer "):
+    #     try:
+    #         user, _ = await _fetch_userinfo(auth_header.split(" ", 1)[1].strip())
+    #         return user
+    #     except Exception:
+    #         # If a header token is present but invalid, do not fall back to cookie refresh.
+    #         return None
+
+    # Fall back to cookie-based tokens (used by the browser/OIDC flow)
     access_token = request.cookies.get("access_token")
     refresh_token = request.cookies.get("refresh_token")
     if not access_token and not refresh_token:
