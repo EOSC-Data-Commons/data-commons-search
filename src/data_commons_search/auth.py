@@ -367,12 +367,12 @@ async def auth_logout(request: Request) -> RedirectResponse:
 
 
 @router.get("/auth/user")
-async def auth_user(user: dict[str, Any] | None = Depends(optional_auth)) -> dict[str, Any]:
+async def auth_user(user: UserInfo | None = Depends(optional_auth)) -> UserInfo:
     """Get current authenticated user info."""
     # print(user)
     if user is None:
-        return {"authenticated": False}
-    return {"authenticated": True, "user": user}
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
 
 
 # def _extract_refresh_expires(token_response: dict[str, Any]) -> int | None:
