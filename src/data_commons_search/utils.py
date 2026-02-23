@@ -93,7 +93,7 @@ def load_chat_model(model: str) -> BaseChatModel:
     if provider == "einfracz":
         # https://chat.ai.e-infra.cz
         return ChatOpenAI(
-            base_url="https://chat.ai.e-infra.cz/api/v1",
+            base_url="https://llm.ai.e-infra.cz/v1",
             model=model_name,
             api_key=SecretStr(settings.einfracz_api_key),
             max_completion_tokens=settings.llm_max_tokens,
