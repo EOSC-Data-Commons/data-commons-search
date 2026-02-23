@@ -27,17 +27,27 @@ class Settings(BaseSettings):
     # opensearch_url: str = "http://opensearch:9200"
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
+    use_online_embedding_model: bool = False
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dimensions: int = 384  # 60MB
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
+    # Online embedding model setting:
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
 
     # LLM providers API keys
     default_llm_model: str = "einfracz/qwen3-coder"
     einfracz_api_key: str = ""
     openrouter_api_key: str = ""
+    dashscope_api_key: str = ""
     llm_max_tokens: int = 8192  # or 4096
     llm_seed: int = 42
+
+    # Custom LLM setting
+    use_custom_llm: bool = False
+    custom_llm_base_url: str = ""
+    custom_api_key: str = ""
 
     # The name of the application used for display
     app_name: str = "EOSC Data Commons MCP"

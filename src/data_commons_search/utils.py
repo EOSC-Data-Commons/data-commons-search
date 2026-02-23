@@ -12,6 +12,7 @@ from pydantic import BaseModel, SecretStr
 
 from data_commons_search.config import settings
 from data_commons_search.models import AgentMsg
+import logging
 
 # Disable logger in your code with `logging.getLogger("data_commons_search").setLevel(logging.WARNING)`
 logger = logging.getLogger("data_commons_search")
@@ -81,6 +82,9 @@ def get_langchain_msgs(msgs: list[AgentMsg]) -> list[AnyMessage]:
             new_msgs.append(HumanMessage(content=msg.content))
     return new_msgs
 
+# Get provider name and model name
+def get_provider_model(model: str):
+    return model.split("/", maxsplit=1)
 
 def load_chat_model(model: str) -> BaseChatModel:
     """Load a chat model from a fully specified name.
@@ -88,8 +92,16 @@ def load_chat_model(model: str) -> BaseChatModel:
     Args:
         fully_specified_name (str): String in the format 'provider/model'.
     """
-    provider, model_name = model.split("/", maxsplit=1)
-
+    provider, model_name = get_provider_model(model)
+    logging.info(f"Use {provider}'s {model_name}")
+    # If custom llm setting is used
+    if settings.use_custom_llm:
+        return ChatOpenAI(
+            base_url=settings.custom_llm_base_url,
+            model = model_name,
+            api_key=SecretStr(settings.custom_api_key),
+            max_completion_tokens=settings.llm_max_tokens
+        )
     if provider == "einfracz":
         # https://chat.ai.e-infra.cz
         return ChatOpenAI(
@@ -112,6 +124,14 @@ def load_chat_model(model: str) -> BaseChatModel:
             # },
         )
 
+    # dashscope
+    if provider == "dashscope":
+        return ChatOpenAI(
+            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+            model=model_name,
+            api_key=SecretStr(settings.dashscope_api_key),
+            max_completion_tokens=settings.llm_max_tokens
+        )
     # if provider == "groq":
     #     # https://python.langchain.com/docs/integrations/chat/groq/
     #     from langchain_groq import ChatGroq
