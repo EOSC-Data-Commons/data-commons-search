@@ -68,7 +68,7 @@ jobs:
           repository: EOSC-Data-Commons/eoscdcpoc
           path: eoscdcpoc
           # If this workflow was triggered by a tag, use that tag to check out the frontend repo
-          ref: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'main' }}
+          ref: fbfa6471e0b2016ecff42856ae930dd8fe03966f
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
