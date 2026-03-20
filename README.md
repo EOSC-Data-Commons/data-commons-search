@@ -24,7 +24,7 @@ The HTTP API comprises 2 main endpoints:
 >
 > It can also be used just as a MCP server through the pip package.
 
-## 🔌 Connect client to MCP server
+## 🔌 Connect to MCP server
 
 The system can be used directly as a MCP server using either STDIO, or Streamable HTTP transport.
 
@@ -133,6 +133,10 @@ POSTGRES_URL=postgresql://user:password@localhost:5432/appDB
 
 ### ⚡️ Start dev server
 
+> [!IMPORTANT]
+>
+> The search system needs to connect to a PostgreSQL database to sotre authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse).
+
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
 
 ```sh
@@ -156,37 +160,36 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > VITE_BACKEND_API_URL=http://localhost:8000 npm run dev
 > ```
 
-> [!IMPORTANT]
->
-> To build and integrate the frontend web app to the server, from the [matchmaker frontend folder](https://github.com/EOSC-Data-Commons/matchmaker), which is expected to be alongside this project folder (in the same folder), run:
->
-> ```sh
-> npm run build && rm -rf ../data-commons-search/src/data_commons_search/webapp/ && cp -R dist/spa/ ../data-commons-search/src/data_commons_search/webapp/
-> ```
-
 > [!TIP]
 >
 > Example `curl` request:
 >
 > ```sh
 > curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
-> 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
+> 	-d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "einfracz/qwen3-coder"}'
 > ```
 >
-> With logged in user access token:
+> With authenticated user access token from http://127.0.0.1:8000/auth/login:
 >
 > ```sh
 > curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
->   -H "Cookie: access_token=$ACCESS_TOKEN" \
-> 	-d '{"messages": [{"role": "user", "content": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}], "model": "einfracz/qwen3-coder"}'
+> -H "Cookie: access_token=$ACCESS_TOKEN" \
+> -d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "einfracz/qwen3-coder"}'
 > ```
 >
-> Recommended model per supported provider:
+> Get last conversation:
 >
-> - `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
-> - `mistralai/mistral-medium-latest` (large is older, and not as good with tool calls)
-> - `groq/moonshotai/kimi-k2-instruct`
-> - `openai/gpt-4.1`
+> ```sh
+> curl -X GET "http://localhost:8000/conversation/$(curl -s http://localhost:8000/conversations -H "Content-Type: application/json" -H "Cookie: access_token=$ACCESS_TOKEN" | jq -r '.[-1].thread_id')" -H "Content-Type: application/json" -H "Cookie: access_token=$ACCESS_TOKEN"
+> ```
+>
+> Find available model from Cesnet provider:
+>
+> ```sh
+> curl -H "Authorization: Bearer $EINFRACZ_API_KEY" https://llm.ai.e-infra.cz/v1/models | jq ".data[].id"
+> ```
+>
+> Recommended model: `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
 
 ### 📦 Build for production
 
@@ -248,23 +251,22 @@ docker compose up
 
 > [!CAUTION]
 >
-> You need to first start the server on port 8001 (see start dev server section)
+> You need to first start the server on port 8001 (see start dev server section) and PostgreSQL.
 
 ```bash
 uv run pytest
 ```
 
-To display all logs when debugging:
+To display all logs for debugging:
 
-```bash
+```sh
 uv run pytest -s
 ```
 
 ### 🧹 Format code and type check
 
-```bash
-uvx ruff format
-uvx ruff check --fix
+```sh
+uvx ruff format && uvx ruff check --fix
 uv run mypy
 ```
 

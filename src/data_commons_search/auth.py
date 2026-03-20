@@ -12,9 +12,10 @@ from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import OpenIdConnect
-from pydantic import BaseModel, ConfigDict
 
 from data_commons_search.config import settings
+from data_commons_search.db import ensure_user_exists
+from data_commons_search.models import UserInfo
 from data_commons_search.utils import logger
 
 # OIDC Configuration cache
@@ -30,14 +31,6 @@ oidc_scheme = OpenIdConnect(
 
 DEFAULT_EXPIRY = 3600  # 1 hour
 DEFAULT_REFRESH_EXPIRY = 2592000  # 30 * 24 * 3600 = 30 days
-
-
-class UserInfo(BaseModel):
-    sub: str
-    email: str
-    name: str | None = None
-    preferred_username: str | None = None
-    model_config = ConfigDict(extra="allow")
 
 
 async def get_oidc_config() -> dict[str, Any]:
@@ -349,9 +342,13 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
     # Clear the state and PKCE cookies
     response.delete_cookie(key="oauth_state")
     response.delete_cookie(key="pkce_verifier")
-    logger.info(f"User authenticated successfully via OIDC.\nRefresh token: {tokens.get('refresh_token')}")
     logger.info(tokens)
+    logger.info(f"User authenticated successfully via OIDC.\nRefresh token: {tokens.get('refresh_token')}")
+    logger.info(f"export ACCESS_TOKEN={tokens.get('access_token')}")
     # logger.info(await _fetch_userinfo(tokens.get("access_token")))
+    user, _ = await _fetch_userinfo(tokens.get("access_token"))
+    if user is not None:
+        ensure_user_exists(user)
     return response
 
 

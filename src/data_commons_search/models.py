@@ -1,35 +1,131 @@
 """Pydantic models for search results and reranking"""
 
 import uuid
+from datetime import datetime, timezone
+from typing import Annotated, Any, Literal
 
 from langchain.messages import AIMessage
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from data_commons_search.config import settings
 
-# Chat agent input models
+
+class UserInfo(BaseModel):
+    """User info based on standard OIDC claims."""
+
+    sub: str
+    email: str
+    name: str | None = None
+    preferred_username: str | None = None
+    model_config = ConfigDict(extra="allow")
 
 
-class AgentMsg(BaseModel):
-    role: str  # Literal["user", "assistant", "system", "tool"]
-    content: str
+# ── Conversation message models ──────────────────────────────────────────────
+
+
+class TextPart(BaseModel):
+    """Text content part for multipart messages/results."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+ContentPart = TextPart
+
+
+class MessageItem(BaseModel):
+    """A conversational message item."""
+
+    type: Literal["message"] = "message"
+    id: str = Field(default_factory=lambda: f"msg_{uuid.uuid4().hex}")
+    role: Literal["system", "user", "assistant"]
+    content: list[ContentPart]
+    metadata: dict[str, object] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ToolCallItem(BaseModel):
+    """A tool call item requested by the assistant."""
+
+    type: Literal["tool_call"] = "tool_call"
+    id: str = Field(default_factory=lambda: f"call_{uuid.uuid4().hex}")
+    name: str
+    arguments: dict[str, object]
+    parent_message_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ToolResultItem(BaseModel):
+    """A tool result item linked to a prior tool call."""
+
+    type: Literal["tool_result"] = "tool_result"
+    id: str = Field(default_factory=lambda: f"res_{uuid.uuid4().hex}")
+    call_id: str
+    content: str | dict[str, Any] | list[Any]
+    is_error: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: dict[str, object] = Field(default_factory=dict)
+
+
+ConversationItem = Annotated[
+    MessageItem | ToolCallItem | ToolResultItem,
+    Field(discriminator="type"),
+]
+
+
+# class Conversation(BaseModel):
+#     """Conversation container built around response-style items."""
+
+#     id: str
+#     items: list[ConversationItem] = Field(default_factory=list)
+#     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+#     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+#     label: str
+
+
+# ── Chat agent input ──────────────────────────────────────────────────────────
 
 
 # class AgentInput(RunAgentInput): https://docs.ag-ui.com/sdk/python/core/types#runagentinput
 class AgentInput(BaseModel):
-    messages: list[AgentMsg]
+    """Input for the chat agent, supporting full conversation history from the client."""
+
+    items: list[ConversationItem] = Field(default_factory=list)
     model: str = settings.default_llm_model
-    thread_id: str = str(uuid.uuid4())
-    run_id: str = str(uuid.uuid4())
-    # NOTE: additional fields from RunAgentInput can be added if needed
-    # tools: list[Tool] = Field(default_factory=list)
-    # context: list[Context] = Field(default_factory=list)
-    # state: Any = None
-    # forwarded_props: Any = None
-    # messages: List[Message]
+    thread_id: str | None = None
+    # model_config = ConfigDict(extra="allow")
 
 
-# OpenSearch result models
+# ── API response models for conversation history ─────────────────────────────
+
+
+class ConversationSummary(BaseModel):
+    """Summary row returned by GET /conversations."""
+
+    thread_id: str
+    label: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ConversationDetail(ConversationSummary):
+    """Full conversation with ordered messages returned by GET /conversation/{thread_id}."""
+
+    items: list[ConversationItem]
+
+
+# ── OpenSearch result models ─────────────────────────────────────────────
+
+
+# https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
+class ToolRegistryTool(BaseModel):
+    """A tool from the tool registry."""
+
+    tool_uri: str = Field(..., alias="toolURI")
+    tool_label: str = Field(..., alias="toolLabel")
+    tool_description: str = Field(..., alias="toolDescription")
+
+    model_config = {"populate_by_name": True}
 
 
 class SearchHitSrcCreator(BaseModel):
@@ -77,17 +173,6 @@ class SearchHitSrc(BaseModel):
     subjects: list[SearchHitSrcSubject] | None = None
     creators: list[SearchHitSrcCreator] | None = None
     resource_type: str = Field("dataset", alias="resourceType")
-
-    model_config = {"populate_by_name": True}
-
-
-# https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
-class ToolRegistryTool(BaseModel):
-    """A tool from the tool registry."""
-
-    tool_uri: str = Field(..., alias="toolURI")
-    tool_label: str = Field(..., alias="toolLabel")
-    tool_description: str = Field(..., alias="toolDescription")
 
     model_config = {"populate_by_name": True}
 
@@ -161,7 +246,7 @@ class RankedSearchResponse(BaseModel):
     hits: list[SearchHit]
 
 
-# Structured output models for reranking
+# ── Structured output models for reranking ─────────────────────────────────
 
 
 class RankedHit(BaseModel):
@@ -224,7 +309,7 @@ class LangChainResponseMetadata(BaseModel):
     #     return v
 
 
-# FileMetrix API response models
+# ── FileMetrix API response models ─────────────────────────────────
 
 
 class FileMetrixExtensionsResponse(BaseModel):

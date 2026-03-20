@@ -4,7 +4,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Generator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,35 +19,54 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.chat_models import BaseChatModel
-from langchain.messages import AnyMessage, HumanMessage
+from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from mcp.types import TextContent
 
-from data_commons_search.auth import UserInfo, apply_pending_auth_cookies, optional_auth, require_auth
-from data_commons_search.auth import router as auth_router
+from data_commons_search.auth import (
+    UserInfo,
+    apply_pending_auth_cookies,
+    optional_auth,
+    require_auth,
+)
+from data_commons_search.auth import (
+    router as auth_router,
+)
 from data_commons_search.config import settings
+from data_commons_search.db import (
+    generate_unique_thread_id,
+    get_conversation,
+    get_conversations,
+    init_postgres_storage,
+    store_messages,
+)
 from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
 from data_commons_search.mcp_server import mcp
 from data_commons_search.models import (
     AgentInput,
+    ConversationDetail,
+    ConversationSummary,
     LangChainResponseMetadata,
+    MessageItem,
     OpenSearchResults,
     RankedSearchResponse,
     RerankingOutput,
     RerankingOutputResponse,
+    TextPart,
     TokenUsageMetadata,
+    ToolCallItem,
+    ToolResultItem,
 )
 from data_commons_search.prompts import RERANK_PROMPT, SUMMARIZE_PROMPT, TOOL_CALL_PROMPT
 from data_commons_search.rate_limit import RateLimiter
 from data_commons_search.utils import (
     file_logger,
-    get_langchain_msgs,
     get_system_prompt,
     load_chat_model,
     logger,
@@ -60,6 +79,7 @@ rate_limiter = RateLimiter(settings.redis_url)
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager."""
+    init_postgres_storage()
     await rate_limiter.init()
     try:
         async with mcp.session_manager.run():
@@ -103,6 +123,7 @@ langfuse = Langfuse(
 
 logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{settings.server_url}{RESET}
 ⚡️ Streamable HTTP MCP server started on {BOLD}{settings.server_url}/mcp{RESET}
+🔓 Login on {BOLD}{settings.server_url}/auth/login{RESET}
 🔎 Using OpenSearch service on {BOLD}{settings.opensearch_url}{RESET}""")
 
 
@@ -122,7 +143,7 @@ async def chat_endpoint(
         raise ValueError("Invalid API key")
 
     response = StreamingResponse(
-        stream_chat_response(search_input),
+        stream_chat_response(search_input, user),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -141,206 +162,298 @@ def get_timestamp() -> int:
     # return int(datetime.now(timezone.utc).timestamp())
 
 
-async def stream_chat_response(search_input: AgentInput) -> AsyncGenerator[str, None]:
-    """Stream the chat response with tool calls, reranking, and results."""
-    msg_id = str(uuid.uuid4())
-    token_usage = TokenUsageMetadata()
-    yield sse(RunStartedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()))
-    yield sse(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=get_timestamp()))
+class ConversationBuilder:
+    """Helper class to build conversation details from messages."""
 
-    # Wrap the entire workflow in a single Langfuse trace
-    with langfuse.start_as_current_observation(
-        as_type="span",
-        name="data-commons-search",
-    ) as trace:
-        # Update trace with user input and metadata
-        trace.update_trace(
-            input={"messages": [m.model_dump() for m in search_input.messages]},
-            session_id=search_input.thread_id,
-            metadata={"model": search_input.model, "run_id": search_input.run_id},
+    def __init__(self, search_input: AgentInput, user: UserInfo | None = None):
+        if user is not None:
+            if search_input.thread_id is None:
+                search_input.thread_id = generate_unique_thread_id(user.sub)
+        else:
+            if search_input.thread_id is None:
+                search_input.thread_id = uuid.uuid4().hex
+        self.thread_id = search_input.thread_id
+        self.items = search_input.items
+        self.model = search_input.model
+        self.user = user
+        self.msg_id = uuid.uuid4().hex
+
+    # def get_summary(self) -> ConversationSummary:
+    #     """Generate a summary for the conversation, e.g. using the first user message."""
+    #     first_user_msg = next((item for item in self.items if isinstance(item, MessageItem) and item.role == "user"), None)
+    #     label = ""
+    #     if first_user_msg:
+    #         text_parts = [part.text for part in first_user_msg.content if part.type == "text"]
+    #         label = text_parts[0] if text_parts else ""
+    #     return ConversationSummary(thread_id=self.conversation_id, label=label)
+
+    def to_langchain(self) -> list[AnyMessage]:
+        """Convert conversation items to LangChain messages."""
+        new_msgs: list[AnyMessage] = []
+        # TODO: add SystemMessage at start?
+        for msg in self.items:
+            if isinstance(msg, MessageItem):
+                text_content = "\n".join(part.text for part in msg.content)
+                if msg.role == "user":
+                    new_msgs.append(HumanMessage(content=text_content))
+                elif msg.role == "assistant":
+                    new_msgs.append(AIMessage(content=text_content))
+                elif msg.role == "system":
+                    new_msgs.append(SystemMessage(content=text_content))
+            elif isinstance(msg, ToolResultItem):
+                # TODO: how to include the ToolCall?
+                new_msgs.append(ToolMessage(content=str(msg.content), tool_call_id=msg.call_id))
+            else:
+                continue
+        return new_msgs
+
+    def add_msg(self, content: str, start_time: int | None = None) -> Generator[str, None]:
+        """Emit a complete assistant text message (start → chunk → end) and record it."""
+        self.items.append(
+            MessageItem(
+                id=self.msg_id,
+                role="assistant",
+                content=[TextPart(text=content)],
+                metadata={"model": self.model},
+            )
         )
+        yield sse(
+            TextMessageStartEvent(message_id=self.msg_id, role="assistant", timestamp=start_time or get_timestamp())
+        )
+        yield sse(TextMessageChunkEvent(delta=content, timestamp=get_timestamp()))
+        yield sse(TextMessageEndEvent(message_id=self.msg_id, timestamp=get_timestamp()))
 
-        # Initialize Langfuse callback handler inside the context so it inherits the current trace
-        langfuse_handler = LangfuseCallbackHandler()
-
-        # Get tools from the MCP client
-        tools = await mcp_client.get_tools()
-
-        # Get model with tools for the initial query
-        llm = load_chat_model(search_input.model, callbacks=[langfuse_handler])
-        llm_with_tools = llm.bind_tools(tools)
-
-        # Step 1: Call LLM to get tool calls
-        msgs = get_langchain_msgs(search_input.messages)
-        tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *msgs])
-        token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
-
-        if tc_llm_resp.content and isinstance(tc_llm_resp.content, str):
-            # If tc_llm_resp has text send it as a TextMessage content alongside tool calls
-            yield sse(
-                TextMessageChunkEvent(
-                    delta=tc_llm_resp.content,
-                    timestamp=get_timestamp(),
-                )
+    def start_tool_call(
+        self, tool_call_id: str, tool_call_name: str, arguments: dict[str, Any], parent_message_id: str
+    ) -> Generator[str, None]:
+        """Add a tool call start event to the conversation."""
+        self.items.append(
+            ToolCallItem(
+                id=tool_call_id,
+                name=tool_call_name,
+                arguments=arguments,
+                parent_message_id=parent_message_id,
             )
-
-        # Step 2: Execute each tool and collect search results and textual outputs
-        search_results = OpenSearchResults(total_found=0, hits=[])
-        tool_text_outputs: list[str] = []
-        async with mcp_client.session("data-commons-search") as session:
-            for tool_call in tc_llm_resp.tool_calls:
-                tool_call_id = tool_call["name"]
-                yield sse(
-                    ToolCallStartEvent(
-                        tool_call_id=tool_call_id,
-                        tool_call_name=tool_call["name"],
-                        parent_message_id=msg_id,
-                        timestamp=get_timestamp(),
-                    )
-                )
-                yield sse(
-                    ToolCallArgsEvent(
-                        tool_call_id=tool_call_id, delta=json.dumps(tool_call["args"]), timestamp=get_timestamp()
-                    )
-                )
-                tc_exec_res = await session.call_tool(tool_call["name"], tool_call["args"])
-
-                if tc_exec_res.structuredContent:
-                    # Handle structured content, try to parse as `OpenSearchResults`
-                    try:
-                        tool_results = OpenSearchResults(**tc_exec_res.structuredContent)
-                        search_results.hits.extend(tool_results.hits)
-                        search_results.total_found += tool_results.total_found
-                    finally:
-                        tool_results_str = json.dumps(tc_exec_res.structuredContent)
-                    yield sse(
-                        ToolCallResultEvent(
-                            message_id=msg_id,
-                            tool_call_id=tool_call_id,
-                            content=tool_results_str,
-                            role="tool",
-                            timestamp=get_timestamp(),
-                        )
-                    )
-                elif tc_exec_res.content:
-                    # Handle if text content is sent back
-                    for resp_content in tc_exec_res.content:
-                        if isinstance(resp_content, TextContent):
-                            # Stream the raw tool text back to the UI, and record it for fallback summarization
-                            yield sse(
-                                ToolCallResultEvent(
-                                    message_id=msg_id,
-                                    tool_call_id=tool_call_id,
-                                    content=resp_content.text,
-                                    role="tool",
-                                    timestamp=get_timestamp(),
-                                )
-                            )
-                            try:
-                                if resp_content.text:
-                                    tool_text_outputs.append(resp_content.text)
-                            except Exception as exc:
-                                logger.exception("Failed to record tool text output: %s", exc)
-
-                yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
-
-        # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
-        if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
-            summary_msgs: list[AnyMessage] = [
-                get_system_prompt(SUMMARIZE_PROMPT),
-                *msgs,
-                HumanMessage(
-                    content=(
-                        "The following tool outputs were produced when handling the user's query:\n\n"
-                        + "\n\n---\n\n".join(tool_text_outputs)
-                        + "\n\nPlease provide a concise summary for the user explaining what the tools returned and any recommendation or next steps."
-                    )
-                ),
-            ]
-            try:
-                fallback_tool_id = "search_summary"
-                yield sse(
-                    ToolCallStartEvent(
-                        tool_call_id=fallback_tool_id, tool_call_name=fallback_tool_id, parent_message_id=msg_id
-                    )
-                )
-                summary_resp = llm.invoke(summary_msgs)
-                token_usage += LangChainResponseMetadata.model_validate(summary_resp.response_metadata).token_usage
-                # Send the summary back as a ToolCallResult-like event so the UI can display it
-                # NOTE: use TextMessageChunkEvent?
-                yield sse(
-                    ToolCallResultEvent(
-                        message_id=msg_id,
-                        tool_call_id=fallback_tool_id,
-                        content=str(summary_resp.content),
-                        role="tool",
-                        timestamp=get_timestamp(),
-                    )
-                )
-                yield sse(ToolCallEndEvent(tool_call_id=fallback_tool_id))
-                trace.update_trace(output={"summary": str(summary_resp.content)})
-                return
-            except Exception as e:
-                logger.error(f"Fallback summarization failed: {e}")
-
-        # Step 3: If no results found or no tool calls, handle early exit
-        if not tc_llm_resp.tool_calls or search_results.total_found == 0:
-            yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
-            yield sse(
-                RunFinishedEvent(
-                    thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp()
-                )
-            )
-            trace.update_trace(output={"message": "No results found"})
-            return
-
-        # print(json.dumps(search_results.model_dump(), indent=2))
-
-        # Step 4: Rerank search results using LLM with structured output
-        rerank_tc_id = "rerank_results"
+        )
         yield sse(
             ToolCallStartEvent(
-                tool_call_id=rerank_tc_id,
-                tool_call_name="rerank_results",
-                parent_message_id=msg_id,
+                tool_call_id=tool_call_id,
+                tool_call_name=tool_call_name,
+                parent_message_id=parent_message_id,
                 timestamp=get_timestamp(),
             )
         )
-        final_response = await rerank_search_results(
-            llm,
-            msgs,
-            search_results,
-            token_usage,
+        yield sse(
+            ToolCallArgsEvent(
+                tool_call_id=tool_call_id,
+                delta=json.dumps(arguments),
+                timestamp=get_timestamp(),
+            )
+        )
+
+    def end_tool_call(
+        self, tool_call_id: str, tool_call_name: str, msg_id: str, tool_results_str: str
+    ) -> Generator[str, None]:
+        """Add a tool call end event to the conversation."""
+        self.items.append(
+            ToolResultItem(
+                call_id=tool_call_id,
+                content=tool_results_str,
+                metadata={"name": tool_call_name, "model": self.model},
+            )
         )
         yield sse(
             ToolCallResultEvent(
                 message_id=msg_id,
-                tool_call_id=rerank_tc_id,
-                content=final_response.model_dump_json(by_alias=True),
+                tool_call_id=tool_call_id,
+                content=tool_results_str,
                 role="tool",
                 timestamp=get_timestamp(),
             )
         )
-        yield sse(ToolCallEndEvent(tool_call_id=rerank_tc_id, timestamp=get_timestamp()))
-        yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
-        yield sse(
-            RunFinishedEvent(thread_id=search_input.thread_id, run_id=search_input.run_id, timestamp=get_timestamp())
-        )
+        yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
 
-        # Update trace with final output
-        trace.update_trace(output=final_response.model_dump())
+    def store_messages(self) -> None:
+        """Store the conversation messages in the database."""
+        if self.user:
+            store_messages(user=self.user, thread_id=self.thread_id, items=self.items)
 
-    file_logger.info(
-        json.dumps(
-            {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "token_usage": token_usage.model_dump(),
-                "input": search_input.model_dump(),
-                "response": final_response.model_dump(),
-            }
-        )
-    )
-    logger.info(f'/chat "{search_input.messages[-1].content}" | {token_usage.model_dump()}')
+
+async def stream_chat_response(search_input: AgentInput, user: UserInfo | None = None) -> AsyncGenerator[str, None]:
+    """Stream the chat response with tool calls, reranking, and results."""
+    run_id = str(uuid.uuid4())
+    token_usage = TokenUsageMetadata()
+
+    conv = ConversationBuilder(search_input, user)
+    # Track how many items were sent by the client so we only store new items
+    initial_items_count = len(conv.items)
+
+    yield sse(RunStartedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
+
+    final_response: RankedSearchResponse | None = None
+    try:
+        # Wrap the entire workflow in a single Langfuse trace
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="data-commons-search",
+        ) as trace:
+            # Update trace with user input and metadata
+            trace.update_trace(
+                input={"items": [m.model_dump() for m in search_input.items]},
+                session_id=search_input.thread_id,
+                metadata={"model": search_input.model, "run_id": run_id},
+            )
+
+            # Initialize Langfuse callback handler inside the context so it inherits the current trace
+            langfuse_handler = LangfuseCallbackHandler()
+
+            # Get tools from the MCP client
+            tools = await mcp_client.get_tools()
+
+            # Get model with tools for the initial query
+            llm = load_chat_model(search_input.model, callbacks=[langfuse_handler])
+            llm_with_tools = llm.bind_tools(tools)
+
+            # Step 1: Call LLM to get tool calls
+            lc_msgs = conv.to_langchain()
+            # TODO: move the system prompt inside `to_langchain()`?
+            # TODO: just call conv.to_langchain() for most cases to ask feedback from LLM
+            llm_start = get_timestamp()
+            tc_llm_resp = llm_with_tools.invoke([get_system_prompt(TOOL_CALL_PROMPT), *lc_msgs])
+            token_usage += LangChainResponseMetadata.model_validate(tc_llm_resp.response_metadata).token_usage
+
+            if tc_llm_resp.content and isinstance(tc_llm_resp.content, str):
+                # If tc_llm_resp has text send it as a TextMessage content alongside tool calls
+                for _chunk in conv.add_msg(tc_llm_resp.content, start_time=llm_start):
+                    yield _chunk
+
+            # Step 2: Execute each tool and collect search results and textual outputs
+            search_results = OpenSearchResults(total_found=0, hits=[])
+            tool_text_outputs: list[str] = []
+            async with mcp_client.session("data-commons-search") as session:
+                for tool_call in tc_llm_resp.tool_calls:
+                    tool_call_id = str(tool_call.get("id") or f"call_{uuid.uuid4().hex}")
+                    tool_call_name = str(tool_call["name"])
+                    tool_call_args = dict(tool_call["args"])
+                    for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, tool_call_args, conv.msg_id):
+                        yield _chunk
+                    tool_call_res = await session.call_tool(tool_call_name, tool_call_args)
+
+                    if tool_call_res.structuredContent:
+                        # Handle structured content, try to parse as `OpenSearchResults`
+                        tool_results_str = json.dumps(tool_call_res.structuredContent)
+                        try:
+                            tool_results = OpenSearchResults(**tool_call_res.structuredContent)
+                            search_results.hits.extend(tool_results.hits)
+                            search_results.total_found += tool_results.total_found
+                        except Exception as exc:
+                            logger.warning("Could not parse structured content as OpenSearchResults: %s", exc)
+                        for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, conv.msg_id, tool_results_str):
+                            yield _chunk
+                    elif tool_call_res.content:
+                        # Handle if text content is sent back; collect all text parts then emit a single result
+                        tool_text = ""
+                        for resp_content in tool_call_res.content:
+                            if isinstance(resp_content, TextContent) and resp_content.text:
+                                tool_text_outputs.append(resp_content.text)
+                                tool_text += resp_content.text
+                        for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, conv.msg_id, tool_text):
+                            yield _chunk
+                    else:
+                        yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
+
+            # TODO: improve this, just send back the conversation without asking summary?
+            # Handle if there were tool calls output, but no search results: ask the LLM to summarize tools outputs
+            if tc_llm_resp.tool_calls and search_results.total_found == 0 and tool_text_outputs:
+                summary_msgs: list[AnyMessage] = [
+                    get_system_prompt(SUMMARIZE_PROMPT),
+                    *lc_msgs,
+                    HumanMessage(
+                        content=(
+                            "The following tool outputs were produced when handling the user's query:\n\n"
+                            + "\n\n---\n\n".join(tool_text_outputs)
+                            + "\n\nPlease provide a concise summary for the user explaining what the tools returned and any recommendation or next steps."
+                        )
+                    ),
+                ]
+
+                try:
+                    summary_start = get_timestamp()
+                    summary_resp = llm.invoke(summary_msgs)
+                    token_usage += LangChainResponseMetadata.model_validate(summary_resp.response_metadata).token_usage
+                    summary_content = str(summary_resp.content)
+                    for _chunk in conv.add_msg(summary_content, start_time=summary_start):
+                        yield _chunk
+                    trace.update_trace(output={"summary": summary_content})
+                    return
+                except Exception as e:
+                    logger.error(f"Fallback summarization failed: {e}")
+
+            # Step 3: If no results found or no tool calls, handle early exit
+            if not tc_llm_resp.tool_calls or search_results.total_found == 0:
+                for _chunk in conv.add_msg("No results found"):
+                    yield _chunk
+                yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
+                trace.update_trace(output={"message": "No results found"})
+                return
+
+            # print(json.dumps(search_results.model_dump(), indent=2))
+
+            # Step 4: Rerank search results using LLM with structured output
+            rerank_tc_id = "rerank_results"
+            for _chunk in conv.start_tool_call(
+                rerank_tc_id, "rerank_results", {"top_k": settings.reranking_results_count}, conv.msg_id
+            ):
+                yield _chunk
+            final_response = await rerank_search_results(
+                llm,
+                lc_msgs,
+                search_results,
+                token_usage,
+            )
+            for _chunk in conv.end_tool_call(
+                rerank_tc_id, "rerank_results", conv.msg_id, final_response.model_dump_json(by_alias=True)
+            ):
+                yield _chunk
+            yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
+
+            # Update trace with final output
+            trace.update_trace(output=final_response.model_dump())
+    finally:
+        # Store only the new items from this turn: the current user message
+        # (last item in the client-provided history) + server-generated items.
+        # This avoids re-storing the full client-provided history on every turn.
+        if user is not None:
+            print(conv.items[0])
+            new_items_start = max(0, initial_items_count - 1)
+            new_items = conv.items[new_items_start:]
+            if new_items:
+                store_messages(
+                    user=user,
+                    thread_id=conv.thread_id,
+                    items=new_items,
+                )
+
+        # Log the user last msg and token usage for the run
+        last_user_msg = ""
+        for item in reversed(search_input.items):
+            if isinstance(item, MessageItem) and item.role == "user":
+                last_user_msg = "\n".join(part.text for part in item.content if part.type == "text")
+                break
+        logger.info(f'/chat "{last_user_msg}" | {token_usage.model_dump()}')
+        if final_response is not None:
+            print(search_input.model_dump())
+            file_logger.info(
+                json.dumps(
+                    {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "token_usage": token_usage.model_dump(),
+                        # "input": search_input.model_dump(), # TODO: we need to handle datetimes in the items
+                        "input": last_user_msg,
+                        "response": final_response.model_dump(),
+                    }
+                )
+            )
 
 
 async def rerank_search_results(
@@ -409,15 +522,24 @@ async def rerank_search_results(
         )
 
 
-@app.get("/history")
-async def get_history(user: UserInfo = Depends(require_auth)) -> list[dict[str, Any]]:
-    """Get chat history for the authenticated user.
+@app.get("/conversations")
+async def list_conversations(user: UserInfo = Depends(require_auth)) -> list[ConversationSummary]:
+    """Return a summary list of all conversations for the authenticated user, newest first."""
+    # logger.info(f"User {user.preferred_username or user.sub} listed conversations")
+    return get_conversations(user.sub)
 
-    Requires authentication.
+
+@app.get("/conversation/{thread_id}")
+async def get_conversation_endpoint(thread_id: str, user: UserInfo = Depends(require_auth)) -> ConversationDetail:
+    """Return the full message history for a single conversation thread.
+
+    Messages are returned in chronological order.
+    Requires authentication and ownership of the thread.
     """
-    logger.info(f"User {user.preferred_username or user.sub} requested history")
-    # TODO: Implement actual history retrieval from database
-    return []
+    detail = get_conversation(user.sub, thread_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return detail
 
 
 @app.get("/", include_in_schema=False)

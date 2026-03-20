@@ -6,13 +6,12 @@ import pathlib
 from datetime import datetime
 
 from langchain.chat_models import BaseChatModel, init_chat_model
-from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain.messages import SystemMessage
 from langchain_core.callbacks import Callbacks
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, SecretStr
 
 from data_commons_search.config import settings
-from data_commons_search.models import AgentMsg
 
 # from langchain_litellm import ChatLiteLLM
 
@@ -66,23 +65,6 @@ def sse(data: BaseModel) -> str:
 def get_system_prompt(prompt: str) -> SystemMessage:
     """Get the system prompt with current date."""
     return SystemMessage(prompt.format(current_date=datetime.now().strftime("%Y-%m-%d")))
-
-
-def get_langchain_msgs(msgs: list[AgentMsg]) -> list[AnyMessage]:
-    """Convert messages from ChatCompletionRequest to LangChain format."""
-    new_msgs: list[AnyMessage] = []
-    for msg in msgs:
-        if msg.role == "human":
-            new_msgs.append(HumanMessage(content=msg.content))
-        elif msg.role == "ai":
-            new_msgs.append(AIMessage(content=msg.content))
-        elif msg.role == "system":
-            new_msgs.append(SystemMessage(content=msg.content))
-        elif msg.role == "tool":
-            new_msgs.append(ToolMessage(content=msg.content, tool_call_id=getattr(msg, "tool_call_id", "")))
-        else:
-            new_msgs.append(HumanMessage(content=msg.content))
-    return new_msgs
 
 
 def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
