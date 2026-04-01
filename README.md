@@ -251,7 +251,7 @@ docker compose up
 
 > [!CAUTION]
 >
-> You need to first start the server on port 8001 (see start dev server section) and PostgreSQL.
+> You need to first start the server on port 8000 (see start dev server section) and PostgreSQL.
 
 ```bash
 uv run pytest
@@ -261,6 +261,12 @@ To display all logs for debugging:
 
 ```sh
 uv run pytest -s
+```
+
+Run search benchmark:
+
+```sh
+uv run tests/benchmark.py
 ```
 
 ### 🧹 Format code and type check

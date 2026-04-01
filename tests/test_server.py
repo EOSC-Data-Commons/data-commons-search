@@ -1,5 +1,5 @@
 import json
-from typing import Any, TypedDict
+from typing import Any
 
 import httpx
 import pytest
@@ -7,65 +7,19 @@ from ag_ui.core import RunStartedEvent
 
 from data_commons_search.config import settings
 from data_commons_search.models import RankedSearchResponse
+from tests.benchmark import TestItem, test_items
 
-
-class ExpectedResult(TypedDict):
-    id: str
-    file_extensions: list[str]
-
-
-class TestItem(TypedDict):
-    input: str
-    expected_results: list[ExpectedResult]
-    lang: str
-
-
-# TODO: should we do more a test like benchmarking?
-# Would need a set of known inputs and expected outputs though
-
-# When running the tests, ensure the server is running on port 8001
+# When running the tests, ensure the server is running on port 8000
 server_port = 8000
 llm_models = [
-    "einfracz/gpt-oss-120b",
     "einfracz/qwen3-coder",
+    # "einfracz/gpt-oss-120b",
+    # "einfracz/kimi-k2.5",
+    # "einfracz/deepseek-v3.2",
 ]
 
-test_items: list[TestItem] = [
-    {
-        "input": "CO2 saturation in Amazonian rivers",
-        "lang": "en",
-        "expected_results": [
-            {
-                "id": "https://doi.org/10.17026/DANS-ZMD-STSG",
-                "file_extensions": ["tab-separated-values", "xml", "pdf"],
-            }
-        ],
-    },
-    {
-        "input": "What datasets are relevant for my project on climate-driven changes in bird densities?",
-        "lang": "en",
-        "expected_results": [
-            {
-                "id": "https://hal.science/hal-00530538v1",
-                "file_extensions": [],
-            },
-            {
-                "id": "https://hal.science/hal-00530538v1",
-                "file_extensions": [],
-            },
-        ],
-    },
-    {
-        "input": "Wader breeding densities in Europe",
-        "lang": "en",
-        "expected_results": [
-            {
-                "id": "https://doi.org/10.17026/DANS-XSV-355J",
-                "file_extensions": ["vnd.oasis.opendocument.spreadsheet", "zip", "plain"],
-            },
-        ],
-    },
-]
+# "Datasets about emoji" search should match "ACCOMOJI" in https://www.swissubase.ch/en/catalogue/search?q=emojis&p=0&ps=10&sn=ref-number&sd=desc
+# But it does not seems to be in search index
 
 
 def opensearch_is_available() -> bool:
@@ -91,12 +45,7 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
             assert response.status_code == 200
             # Test chat call streaming endpoint
             payload = {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": test_item["input"],
-                    }
-                ],
+                "items": [{"type": "message", "role": "user", "content": [{"text": test_item["input"]}]}],
                 "model": llm_model,
             }
             headers = {"Content-Type": "application/json", "Authorization": "Bearer SECRET_KEY"}

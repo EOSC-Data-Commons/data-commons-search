@@ -64,6 +64,7 @@ dev = [
     "mypy >=1.18.0",
     "pre-commit >=4.5.1",
     "mcp[cli]",
+    "rich >=13.0.0",
 ]
 
 # # Required for onnxruntime-gpu on CUDA 12
