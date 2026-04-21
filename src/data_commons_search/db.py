@@ -182,7 +182,7 @@ def store_messages(
         logger.exception("Failed to store messages in database: %s", exc)
 
 
-_LABEL_MAX_LEN = 50
+_LABEL_MAX_LEN = 100
 
 
 def make_conversation_label(items: Sequence[ConversationItem]) -> str | None:

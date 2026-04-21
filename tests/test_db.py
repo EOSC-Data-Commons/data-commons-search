@@ -39,10 +39,10 @@ class TestMakeConversationLabel:
         assert make_conversation_label(items) == "My question"
 
     def test_truncates_long_text(self):
-        long_text = "a" * 100
+        long_text = "a" * 150
         label = make_conversation_label([msg("user", long_text)])
         assert label is not None
-        assert len(label) <= 50
+        assert len(label) <= 100
         assert label.endswith("…")
 
     def test_exactly_max_length_not_truncated(self):
