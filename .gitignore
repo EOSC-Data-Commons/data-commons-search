@@ -3,6 +3,7 @@
 .fastembed_cache
 *.env
 .vscode
+.idea
 
 # Environment variables
 .env
