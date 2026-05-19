@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     debug_enabled: bool = False
 
     # OpenSearch settings
-    opensearch_index: str = "test_datacite"
+    # opensearch_index: str = "test_datacite"
+    opensearch_index: str = "20260507_datacite"
     # opensearch_url: str = "http://localhost:9200"
     opensearch_url: str = "http://opensearch:9200"
     redis_url: str = "redis://broker:6379"

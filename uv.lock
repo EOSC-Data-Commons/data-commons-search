@@ -9,6 +9,10 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[options]
+exclude-newer = "2026-05-04T12:59:11.735699Z"
+exclude-newer-span = "P3D"
+
 [[package]]
 name = "ag-ui-protocol"
 version = "0.1.10"

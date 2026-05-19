@@ -129,7 +129,9 @@ class ToolRegistryTool(BaseModel):
 
 
 class SearchHitSrcCreator(BaseModel):
-    creator_name: str = Field(..., alias="creatorName")
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    creator_name: str | None = Field(None, alias="creatorName")
 
 
 class SearchHitSrcSubject(BaseModel):

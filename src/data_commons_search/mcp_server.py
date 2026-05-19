@@ -135,10 +135,12 @@ async def search_data(
         logger.error(f"OpenSearch query failed: {e}")
         return OpenSearchResults(total_found=0, hits=[])
     # Extract hits from OpenSearch response
+    # print(f"OpenSearch response: {json.dumps(resp, indent=2)}")
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
+    # print(f"OpenSearch response: {json.dumps(res.model_dump(), indent=2)}")
     return res
 
 

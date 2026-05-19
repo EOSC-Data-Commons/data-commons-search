@@ -142,6 +142,14 @@ async def chat_endpoint(
     if settings.chat_api_key and auth_header.split(" ")[1] != settings.chat_api_key:
         raise ValueError("Invalid API key")
 
+    # Resolve/generate thread_id before streaming so we can expose it as a header.
+    # This lets clients capture it from HTTP headers rather than parsing the SSE stream.
+    if user is not None:
+        if search_input.thread_id is None:
+            search_input.thread_id = generate_unique_thread_id(user.sub)
+    elif search_input.thread_id is None:
+        search_input.thread_id = uuid.uuid4().hex
+
     response = StreamingResponse(
         stream_chat_response(search_input, user),
         media_type="text/event-stream",
@@ -149,6 +157,7 @@ async def chat_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Thread-ID": search_input.thread_id,
         },
     )
     # Make sure refreshed auth cookies are applied to the streaming response
@@ -166,13 +175,8 @@ class ConversationBuilder:
     """Helper class to build conversation details from messages."""
 
     def __init__(self, search_input: AgentInput, user: UserInfo | None = None):
-        if user is not None:
-            if search_input.thread_id is None:
-                search_input.thread_id = generate_unique_thread_id(user.sub)
-        else:
-            if search_input.thread_id is None:
-                search_input.thread_id = uuid.uuid4().hex
-        self.thread_id = search_input.thread_id
+        # thread_id is always resolved before ConversationBuilder is created
+        self.thread_id = search_input.thread_id or uuid.uuid4().hex
         self.items = search_input.items
         self.model = search_input.model
         self.user = user
@@ -424,7 +428,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
         # (last item in the client-provided history) + server-generated items.
         # This avoids re-storing the full client-provided history on every turn.
         if user is not None:
-            print(conv.items[0])
+            # print(conv.items[0])
             new_items_start = max(0, initial_items_count - 1)
             new_items = conv.items[new_items_start:]
             if new_items:
@@ -442,7 +446,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                 break
         logger.info(f'/chat "{last_user_msg}" | {token_usage.model_dump()}')
         if final_response is not None:
-            print(search_input.model_dump())
+            # print(search_input.model_dump())
             file_logger.info(
                 json.dumps(
                     {
@@ -484,7 +488,7 @@ async def rerank_search_results(
                 f"   Dates: {' | '.join([f'{date.date_type}: {date.date}' for date in hit.source.dates])}\n"
             )
         if hit.source.creators:
-            formatted_context += f"   Authors: {', '.join([creator.creator_name for creator in hit.source.creators])}\n"
+            formatted_context += f"   Authors: {', '.join([creator.creator_name for creator in hit.source.creators if creator.creator_name])}\n"
         if hit.source.subjects:
             formatted_context += f"   Keywords: {', '.join([subj.subject for subj in hit.source.subjects])}\n"
         formatted_context += f"   Description: {hit.description}\n\n"
