@@ -128,14 +128,16 @@ LANGFUSE_SECRET_KEY=
 
 OPENSEARCH_URL=http://localhost:9200
 REDIS_URL=redis://localhost:6379
-POSTGRES_URL=postgresql://user:password@localhost:5432/appDB
+POSTGRES_USER=app
+POSTGRES_USER=app_password
+POSTGRES_HOST=localhost
 ```
 
 ### ⚡️ Start dev server
 
 > [!IMPORTANT]
 >
-> The search system needs to connect to a PostgreSQL database to sotre authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse).
+> The search system needs to connect to a PostgreSQL database to store authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse). See section below for more details on managing the database.
 
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
 
@@ -157,7 +159,7 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 >
 > ```sh
 > cd ../matchmaker
-> VITE_BACKEND_API_URL=http://localhost:8000 npm run dev
+> npm run dev
 > ```
 
 > [!TIP]
@@ -190,6 +192,34 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > ```
 >
 > Recommended model: `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
+
+### 💾 Database
+
+The search system needs to connect to a PostgreSQL database to store authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse).
+
+```sh
+cd metadata-warehouse
+docker compose up postgres
+```
+
+Initialize db (from metadata-warehouse repo):
+
+```sh
+cd scripts/postgres_data
+uv run create_db.py --db appdb --reset
+```
+
+Reset db:
+
+```sh
+docker compose down --volumes --remove-orphans
+```
+
+Export schema from `db.py` to metadata-warehouse (command to run in the root of the data-commons-search repo, and expect the metadata-warehouse repo to be alongside the data-commons-search repo in the same folder):
+
+```sh
+uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/create_sql/appdb/tables.sql
+```
 
 ### 📦 Build for production
 
