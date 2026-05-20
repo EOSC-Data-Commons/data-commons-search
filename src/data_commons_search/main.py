@@ -25,7 +25,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.chat_models import BaseChatModel
 from langchain.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langfuse import Langfuse
+from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from mcp.types import TextContent
 
@@ -297,17 +297,18 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
     final_response: RankedSearchResponse | None = None
     try:
         # Wrap the entire workflow in a single Langfuse trace
-        with langfuse.start_as_current_observation(
-            as_type="span",
-            name="data-commons-search",
-        ) as trace:
-            # Update trace with user input and metadata
-            trace.update_trace(
+        with (
+            langfuse.start_as_current_observation(
+                as_type="span",
+                name="data-commons-search",
                 input={"items": [m.model_dump() for m in search_input.items]},
+                metadata={"model": search_input.model, "run_id": run_id},
+            ),
+            propagate_attributes(
                 session_id=search_input.thread_id,
                 metadata={"model": search_input.model, "run_id": run_id},
-            )
-
+            ),
+        ):
             # Initialize Langfuse callback handler inside the context so it inherits the current trace
             langfuse_handler = LangfuseCallbackHandler()
 
@@ -388,7 +389,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                     summary_content = str(summary_resp.content)
                     for _chunk in conv.add_msg(summary_content, start_time=summary_start):
                         yield _chunk
-                    trace.update_trace(output={"summary": summary_content})
+                    langfuse.update_current_span(output={"summary": summary_content})
                     return
                 except Exception as e:
                     logger.error(f"Fallback summarization failed: {e}")
@@ -398,7 +399,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                 for _chunk in conv.add_msg("No results found"):
                     yield _chunk
                 yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
-                trace.update_trace(output={"message": "No results found"})
+                langfuse.update_current_span(output={"message": "No results found"})
                 return
 
             # print(json.dumps(search_results.model_dump(), indent=2))
@@ -422,7 +423,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
 
             # Update trace with final output
-            trace.update_trace(output=final_response.model_dump())
+            langfuse.update_current_span(output=final_response.model_dump())
     finally:
         # Store only the new items from this turn: the current user message
         # (last item in the client-provided history) + server-generated items.

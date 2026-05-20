@@ -24,14 +24,20 @@ class Settings(BaseSettings):
     # OpenSearch settings
     # opensearch_index: str = "test_datacite"
     opensearch_index: str = "20260507_datacite"
-    # opensearch_url: str = "http://localhost:9200"
     opensearch_url: str = "http://opensearch:9200"
     redis_url: str = "redis://broker:6379"
-    postgres_url: str = "postgresql://postgres:postgres@postgres:5432/appdb"
+
+    postgres_password: str = "postgres"  # noqa: S105
+    postgres_user: str = "postgres"
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_db: str = "appdb"
 
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dimensions: int = 384  # 60MB
+    # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 384
+    # sentence-transformers/paraphrase-multilingual-mpnet-base-v2 768
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
 
@@ -65,6 +71,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="allow",
     )
+
+    @property
+    def postgres_url(self) -> str:
+        """Computed PostgreSQL URL using the provided credentials."""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
     @property
     def server_url(self) -> str:
