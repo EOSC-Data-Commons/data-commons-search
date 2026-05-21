@@ -209,13 +209,17 @@ cd scripts/postgres_data
 uv run create_db.py --db appdb --reset
 ```
 
+> [!IMPORTANT]
+>
+> For staging and production environments you will want to update the `app` user password: `ALTER USER app WITH PASSWORD 'newpassword';`
+
 Reset db:
 
 ```sh
 docker compose down --volumes --remove-orphans
 ```
 
-Export schema from `db.py` to metadata-warehouse (command to run in the root of the data-commons-search repo, and expect the metadata-warehouse repo to be alongside the data-commons-search repo in the same folder):
+Export schema from `db.py` to metadata-warehouse (command to run at the root of the data-commons-search repo, and expect the metadata-warehouse folder to be alongside the data-commons-search folder in the same folder):
 
 ```sh
 uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/create_sql/appdb/tables.sql

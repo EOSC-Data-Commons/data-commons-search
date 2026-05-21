@@ -127,7 +127,7 @@ async def search_data(
             }
         },
     }
-    # logger.debug(f"OpenSearch query body: {json.dumps(body, indent=2)}")
+    # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
     try:
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
@@ -135,12 +135,12 @@ async def search_data(
         logger.error(f"OpenSearch query failed: {e}")
         return OpenSearchResults(total_found=0, hits=[])
     # Extract hits from OpenSearch response
-    # print(f"OpenSearch response: {json.dumps(resp, indent=2)}")
+    # print(f"OpenSearch response raw: {json.dumps(resp, indent=2)}")
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
-    # print(f"OpenSearch response: {json.dumps(res.model_dump(), indent=2)}")
+    # print(f"OpenSearch response parsed: {json.dumps(res.model_dump(), indent=2)}")
     return res
 
 
