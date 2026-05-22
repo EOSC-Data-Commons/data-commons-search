@@ -1,3 +1,3 @@
-"""EOSC Data Commons MCP."""
+"""EOSC Data Commons"""
 
-__version__ = "0.0.0"
+__version__ = "0.7.0"
