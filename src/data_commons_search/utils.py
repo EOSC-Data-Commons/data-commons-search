@@ -166,7 +166,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     return init_chat_model(
         model_name,
         model_provider=provider,
-        timeout=None,
+        # timeout=None,
         max_retries=2,
         callbacks=callbacks,
         # max_tokens=configuration.max_tokens,

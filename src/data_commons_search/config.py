@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     # LLM providers API keys
     default_llm_model: str = "einfracz/qwen3-coder"
+    # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
+    # default_llm_model: str = "mistralai/mistral-medium-latest"
     einfracz_api_key: str = ""
     openrouter_api_key: str = ""
     llm_max_tokens: int = 8192  # or 4096
