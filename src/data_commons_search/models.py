@@ -241,6 +241,7 @@ class OpenSearchResults(BaseModel):
 # Final ranked search response model
 
 
+# TODO: remove, not used anymore
 class RankedSearchResponse(BaseModel):
     """Final response containing ranked search results and summary."""
 

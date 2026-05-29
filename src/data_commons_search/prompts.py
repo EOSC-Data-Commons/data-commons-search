@@ -8,8 +8,13 @@ Today's date: {current_date}\n
 
 TOOL_CALL_PROMPT = (
     INTRO_PROMPT
-    + """Define if you need to use one of the tool provided to get more context to answer the user request, or directly answer the user question.
-If the user provides a simple question (just a word or concept), you should prioritize searching for relevant datasets."""
+    + """Decide whether to call one of the provided tools to gather more context, or to answer the user directly.
+If the user provides a simple question (just a word or concept), prioritize searching for relevant datasets.
+
+When reporting tool results to the user, be concise:
+- Start with a 1-2 sentence summary of what was found overall. Dont mention the total number found, clearly and concisevely state how the results relate to the user question.
+- Then list only the highly relevant results, and shortly how they are relevant to the research question. Include a link or identifier when available using markdown link []().
+- If the query is too generic to rank confidently, ask one focused follow-up question to narrow it down instead of listing everything."""
 )
 
 

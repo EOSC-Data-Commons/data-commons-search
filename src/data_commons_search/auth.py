@@ -56,7 +56,7 @@ def _set_auth_cookies(
         value=access_token,
         max_age=expires_in,
         httponly=True,
-        secure=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         # domain=".eosc-data-commons.eu",
     )
@@ -66,7 +66,7 @@ def _set_auth_cookies(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
+            secure=settings.cookie_secure,
             samesite="lax",
             max_age=refresh_expires_in,
         )
@@ -278,7 +278,7 @@ async def auth_login(request: Request) -> RedirectResponse:
         key="oauth_state",
         value=state,
         httponly=True,
-        secure=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         # samesite="none",
         max_age=600,  # 10min
@@ -288,7 +288,7 @@ async def auth_login(request: Request) -> RedirectResponse:
         key="pkce_verifier",
         value=code_verifier,
         httponly=True,
-        secure=True,
+        secure=settings.cookie_secure,
         samesite="lax",
         # samesite="none",
         max_age=600,

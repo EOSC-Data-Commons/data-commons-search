@@ -1,10 +1,13 @@
 import argparse
 import json
+import math
+import time
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 from fastembed import TextEmbedding
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
 
@@ -28,7 +31,10 @@ mcp = FastMCP(
 )
 
 embedding_model = TextEmbedding(settings.embedding_model)
+reranker_model = TextCrossEncoder(model_name=settings.reranker_model)
 opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
+
+RERANK_TOP_K = 30
 
 
 # https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
@@ -103,12 +109,12 @@ async def search_data(
 
     emb: dict[str, Any] = {
         "vector": embedding.tolist(),
-        "k": settings.opensearch_results_count,
+        "k": settings.search_results_count,
     }
     if filters:
         emb["filter"] = {"bool": {"must": filters}}
     body = {
-        "size": settings.opensearch_results_count,
+        "size": settings.search_results_count,
         "_source": [
             "titles",
             "subjects",
@@ -129,18 +135,48 @@ async def search_data(
     }
     # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
+    t_search_start = time.perf_counter()
     try:
         resp = opensearch_client.search(index=settings.opensearch_index, body=body)
     except Exception as e:
         logger.error(f"OpenSearch query failed: {e}")
         return OpenSearchResults(total_found=0, hits=[])
+    t_search_elapsed = time.perf_counter() - t_search_start
     # Extract hits from OpenSearch response
-    # print(f"OpenSearch response raw: {json.dumps(resp, indent=2)}")
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
-    # print(f"OpenSearch response parsed: {json.dumps(res.model_dump(), indent=2)}")
+    logger.debug(f"search_data: OpenSearch (no rerank) took {t_search_elapsed * 1000:.1f} ms for {len(res.hits)} hits")
+
+    # Cross-encoder reranking
+    if res.hits:
+        # t_rerank_start = time.perf_counter()
+        documents = []
+        for hit in res.hits:
+            title = hit.title if hit.title is not None else ""
+            description = hit.description if hit.description is not None else ""
+            documents.append(f"{title}\n{description}".strip())
+        # scores = list(reranker_model.rerank(search_input, documents))
+        # for hit, score in zip(res.hits, scores, strict=True):
+        #     hit.score = float(score)
+        # reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
+        scores = [float(s) for s in reranker_model.rerank(search_input, documents)]
+        lo, hi = min(scores), max(scores)
+        # Sigmoid with temperature so extremes don't saturate to exactly 0 or 1.
+        # Temperature is derived from the observed range to keep the spread informative
+        # regardless of the model's logit magnitude.
+        mid = (hi + lo) / 2
+        temperature = max((hi - lo) / 8, 1e-6)
+        for hit, score in zip(res.hits, scores, strict=True):
+            hit.score = 1.0 / (1.0 + math.exp(-(score - mid) / temperature))
+        reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
+        res.hits = reranked
+        # t_rerank_elapsed = time.perf_counter() - t_rerank_start
+        # logger.info(
+        #     f"search_data: cross-encoder rerank of top {len(top_hits)} took {t_rerank_elapsed * 1000:.1f} ms "
+        #     f"(total search+rerank: {(t_search_elapsed + t_rerank_elapsed) * 1000:.1f} ms)"
+        # )
     return res
 
 

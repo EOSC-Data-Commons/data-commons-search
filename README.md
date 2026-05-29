@@ -127,7 +127,6 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 
 OPENSEARCH_URL=http://localhost:9200
-REDIS_URL=redis://localhost:6379
 POSTGRES_USER=app
 POSTGRES_USER=app_password
 POSTGRES_HOST=localhost
@@ -205,8 +204,7 @@ docker compose up postgres
 Initialize db (from metadata-warehouse repo):
 
 ```sh
-cd scripts/postgres_data
-uv run create_db.py --db appdb --reset
+uv run --directory scripts/postgres_data create_db.py --db appdb --reset
 ```
 
 > [!IMPORTANT]

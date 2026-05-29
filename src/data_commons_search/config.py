@@ -9,8 +9,7 @@ class Settings(BaseSettings):
     """Define the service settings for the server that can be set using environment variables."""
 
     # Seach results settings
-    opensearch_results_count: int = 100
-    reranking_results_count: int = 20
+    search_results_count: int = 20
 
     filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
     tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
@@ -20,12 +19,13 @@ class Settings(BaseSettings):
     server_host: str = "0.0.0.0"  # noqa: S104
     cors_enabled: bool = True
     debug_enabled: bool = False
+    # Set to False for local HTTP dev (browsers drop Secure cookies over plain HTTP). Keep True in prod.
+    cookie_secure: bool = True
 
     # OpenSearch settings
     # opensearch_index: str = "test_datacite"
     opensearch_index: str = "20260507_datacite"
     opensearch_url: str = "http://opensearch:9200"
-    redis_url: str = "redis://broker:6379"
 
     postgres_password: str = "postgres"  # noqa: S105
     postgres_user: str = "postgres"
@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # sentence-transformers/paraphrase-multilingual-mpnet-base-v2 768
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
+    reranker_model: str = "Xenova/ms-marco-MiniLM-L-12-v2"
 
     # LLM providers API keys
     default_llm_model: str = "einfracz/qwen3-coder"

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -125,18 +124,6 @@ def ensure_user_exists(user: UserInfo) -> None:
         logger.exception("Failed to ensure user in database: %s", exc)
 
 
-def generate_unique_thread_id(user_sub: str) -> str:
-    """Generate a thread ID that does not yet exist for the given user."""
-    while True:
-        thread_id = str(uuid.uuid4())
-        with SessionLocal() as db:
-            exists = db.execute(
-                select(Conversation).where(Conversation.user_id == user_sub, Conversation.thread_id == thread_id)
-            ).scalar_one_or_none()
-        if exists is None:
-            return thread_id
-
-
 def _get_or_create_conversation(
     db: Session, user_sub: str, thread_id: str, items: Sequence[ConversationItem]
 ) -> Conversation:
@@ -255,12 +242,25 @@ def get_conversation(user_sub: str, thread_id: str) -> ConversationDetail | None
 
 
 def delete_conversations(user_sub: str, thread_ids: list[str]) -> None:
-    """Delete conversations (and their messages) owned by `user_sub`."""
+    """Delete conversations (and their messages) owned by `user_sub`.
+
+    If `thread_ids` is empty, all conversations for the user are deleted.
+    """
     with SessionLocal() as db:
-        db.execute(
-            delete(Conversation).where(
-                Conversation.user_id == user_sub,
-                Conversation.thread_id.in_(thread_ids),
-            )
-        )
+        stmt = delete(Conversation).where(Conversation.user_id == user_sub)
+        if thread_ids:
+            stmt = stmt.where(Conversation.thread_id.in_(thread_ids))
+        db.execute(stmt)
         db.commit()
+
+
+# def generate_unique_thread_id(user_sub: str) -> str:
+#     """Generate a thread ID that does not yet exist for the given user."""
+#     while True:
+#         thread_id = str(uuid.uuid4())
+#         with SessionLocal() as db:
+#             exists = db.execute(
+#                 select(Conversation).where(Conversation.user_id == user_sub, Conversation.thread_id == thread_id)
+#             ).scalar_one_or_none()
+#         if exists is None:
+#             return thread_id
