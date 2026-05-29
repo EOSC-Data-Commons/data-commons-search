@@ -1,5 +1,12 @@
 # 🪵 Changelog
 
+## [0.7.1](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.0..v0.7.1) - 2026-05-29
+
+### ⛰️ Features
+
+- Add support for storing API keys in EGI secret store, and add API endpoint to delete conversations - ([b9d7f77](https://github.com/EOSC-Data-Commons/data-commons-search/commit/b9d7f776a852231e47f42bc764377567ee403a5e))
+- Fix reranking with llm, add cross encoder reranker in mcp tool to search datasets, use postgresql instead of redis for rate limiting - ([bc7af9f](https://github.com/EOSC-Data-Commons/data-commons-search/commit/bc7af9fe00ff2e12e79c1db06d07cc9c5f33518f))
+
 ## [0.7.0](https://github.com/EOSC-Data-Commons/data-commons-search/tree/v0.7.0) - 2026-05-22
 
 ### ⚙️ Continuous Integration
