@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # opensearch_index: str = "test_datacite"
     opensearch_index: str = "20260507_datacite"
     opensearch_url: str = "http://opensearch:9200"
+    opensearch_pipeline: str = "rrf-pipeline"
 
     postgres_password: str = "postgres"  # noqa: S105
     postgres_user: str = "postgres"

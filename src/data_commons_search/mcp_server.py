@@ -113,6 +113,21 @@ async def search_data(
     }
     if filters:
         emb["filter"] = {"bool": {"must": filters}}
+
+    keyword_query: dict[str, Any] = {
+        "multi_match": {
+            "query": search_input,
+            "fields": [
+                "titles.title^2",
+                "descriptions.description",
+                "subjects.subject^1.5",
+                # TODO: add more fields?
+            ],
+        }
+    }
+    if filters:
+        keyword_query = {"bool": {"must": [keyword_query], "filter": filters}}
+
     body = {
         "size": settings.search_results_count,
         "_source": [
@@ -128,8 +143,11 @@ async def search_data(
             "_repo",
         ],
         "query": {
-            "knn": {
-                "emb": emb,
+            "hybrid": {
+                "queries": [
+                    {"knn": {"emb": emb}},
+                    keyword_query,
+                ],
             }
         },
     }
@@ -137,7 +155,11 @@ async def search_data(
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
     t_search_start = time.perf_counter()
     try:
-        resp = opensearch_client.search(index=settings.opensearch_index, body=body)
+        resp = opensearch_client.search(
+            index=settings.opensearch_index,
+            body=body,
+            params={"search_pipeline": settings.opensearch_pipeline},
+        )
     except Exception as e:
         logger.error(f"OpenSearch query failed: {e}")
         return OpenSearchResults(total_found=0, hits=[])
