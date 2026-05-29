@@ -141,6 +141,7 @@ async def get_current_user(request: Request, response: Response) -> UserInfo | N
         if access_token:
             user, status_code = await _fetch_userinfo(access_token)
             if user is not None:
+                request.state.access_token = access_token
                 return user
             # Token may be expired/invalid, try refresh flow below.
             if status_code not in (401, 403):
@@ -172,6 +173,7 @@ async def get_current_user(request: Request, response: Response) -> UserInfo | N
             "expires_in": expires_in,
             "refresh_expires_in": refresh_expires_in,
         }
+        request.state.access_token = new_access_token
         user, _ = await _fetch_userinfo(new_access_token)
         return user
     except Exception as e:

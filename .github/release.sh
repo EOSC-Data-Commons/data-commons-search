@@ -20,7 +20,7 @@ git push origin "v$VERSION"
 
 rm -rf dist
 uv build
-uv publish
+# uv publish
 
 # If `uv publish` is broken:
 # uvx hatch build && uvx hatch publish

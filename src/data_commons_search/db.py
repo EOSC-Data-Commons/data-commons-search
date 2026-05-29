@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import TypeAdapter
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, create_engine, func, select
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, create_engine, delete, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -252,3 +252,15 @@ def get_conversation(user_sub: str, thread_id: str) -> ConversationDetail | None
                 for m in msg_rows
             ],
         )
+
+
+def delete_conversations(user_sub: str, thread_ids: list[str]) -> None:
+    """Delete conversations (and their messages) owned by `user_sub`."""
+    with SessionLocal() as db:
+        db.execute(
+            delete(Conversation).where(
+                Conversation.user_id == user_sub,
+                Conversation.thread_id.in_(thread_ids),
+            )
+        )
+        db.commit()

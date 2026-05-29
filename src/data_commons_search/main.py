@@ -19,7 +19,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.chat_models import BaseChatModel
@@ -35,11 +35,10 @@ from data_commons_search.auth import (
     optional_auth,
     require_auth,
 )
-from data_commons_search.auth import (
-    router as auth_router,
-)
+from data_commons_search.auth import router as auth_router
 from data_commons_search.config import settings
 from data_commons_search.db import (
+    delete_conversations,
     generate_unique_thread_id,
     get_conversation,
     get_conversations,
@@ -72,6 +71,7 @@ from data_commons_search.utils import (
     logger,
     sse,
 )
+from data_commons_search.vault import router as vault_router
 
 rate_limiter = RateLimiter(settings.redis_url)
 
@@ -547,6 +547,14 @@ async def get_conversation_endpoint(thread_id: str, user: UserInfo = Depends(req
     return detail
 
 
+@app.delete("/conversations")
+async def delete_conversations_endpoint(
+    thread_ids: list[str] = Body(...), user: UserInfo = Depends(require_auth)
+) -> None:
+    """Delete one or more conversations by their thread IDs. Only deletes conversations owned by the authenticated user."""
+    delete_conversations(user.sub, thread_ids)
+
+
 @app.get("/", include_in_schema=False)
 async def root_redirect() -> RedirectResponse:
     """Redirect root path to the Swagger UI /docs."""
@@ -554,6 +562,7 @@ async def root_redirect() -> RedirectResponse:
 
 
 app.include_router(auth_router)
+app.include_router(vault_router)
 
 
 # # NOTE: deprecated -Serve website built using vite
