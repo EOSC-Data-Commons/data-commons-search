@@ -1,5 +1,11 @@
 # 🪵 Changelog
 
+## [0.7.2](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.1..v0.7.2) - 2026-05-29
+
+### 🐛 Bug Fixes
+
+- Comment cross encoder (too slow in prod) - ([77eccf3](https://github.com/EOSC-Data-Commons/data-commons-search/commit/77eccf3c993dd757baa45334580ebef2bf6cc990))
+
 ## [0.7.1](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.0..v0.7.1) - 2026-05-29
 
 ### ⛰️ Features
