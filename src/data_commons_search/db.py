@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import TypeAdapter
-from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, String, create_engine, delete, func, select
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, String, create_engine, delete, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
@@ -80,6 +80,20 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+
+
+class RateLimit(Base):
+    """Per-key request counter for the Postgres-backed rate limiter.
+
+    Rows are read/written via an atomic UPSERT in `rate_limit.py`; this model
+    exists so the table is created and exported alongside the other ORM tables.
+    """
+
+    __tablename__ = "rate_limits"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 engine = create_engine(settings.postgres_url, pool_pre_ping=True)

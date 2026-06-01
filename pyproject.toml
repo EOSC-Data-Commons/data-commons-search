@@ -30,24 +30,24 @@ classifiers = [
 dynamic = ["version"]
 
 dependencies = [
-    "mcp >=1.25.0,<2",
-    "pydantic >=2.12.5",
-    "pydantic-settings >=2.11.0",
+    "mcp >=1.27.0,<2",
+    "pydantic >=2.13.4",
+    "pydantic-settings >=2.14.1",
     "httpx >=0.28.1",
     "fastembed >=0.7.4",
-    "opensearch-py >=3.0.0",
-    "sqlalchemy >=2.0.46",
-    "psycopg2-binary >=2.9.11",
+    "opensearch-py >=3.2.0",
+    "sqlalchemy >=2.0.50",
+    "psycopg2-binary >=2.9.12",
 ]
 
 [project.optional-dependencies]
 agent = [
-    "fastapi >=0.128.0",
-    "uvicorn[standard] >=0.40.0",
-    "ag-ui-protocol >=0.1.9",
-    "langchain >=1.2.3",
-    "langchain-mcp-adapters >=0.2.1",
-    "langchain-openai >=1.1.6",
+    "fastapi >=0.136.3",
+    "uvicorn[standard] >=0.48.0",
+    "ag-ui-protocol >=0.1.18",
+    "langchain >=1.3.0",
+    "langchain-mcp-adapters >=0.2.2",
+    "langchain-openai >=1.2.2",
     "langfuse >=4.6.1",
     # "langchain-litellm >=0.3.5",
     # "langchain-mistralai >=1.0.1",

@@ -368,6 +368,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                         break
                     # Append assistant message (with tool_calls) so the model sees its own turn
                     lc_msgs.append(AIMessage(content=accumulated.content or "", tool_calls=tool_calls))
+                    rerank_summary: str | None = None
                     # Execute each tool call sequentially, emitting events and feeding results back
                     for tool_call in tool_calls:
                         tool_call_id = str(tool_call.get("id") or f"call_{uuid.uuid4().hex}")
@@ -391,22 +392,24 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                             parsed = tool_call_res.structuredContent
                             tool_results_str = json.dumps(parsed)
                         elif tool_call_res.content:
-                            raw = "".join(
+                            tool_results_str = "".join(
                                 rc.text for rc in tool_call_res.content if isinstance(rc, TextContent) and rc.text
                             )
-                            tool_results_str = raw
                             try:
-                                parsed = json.loads(raw)
+                                parsed = json.loads(tool_results_str)
                             except (json.JSONDecodeError, ValueError):
                                 parsed = None
                         else:
                             tool_results_str = ""
 
                         # If the first tool call returned search results, rerank them with the LLM
+                        logger.info(f"YEAAAH Original search results for tool call '{tool_call_name}'")
                         if parsed is not None:
                             try:
+                                logger.info(f"YEAAAH2 Original search results for tool call '{tool_call_name}'")
                                 search_results = OpenSearchResults.model_validate(parsed)
                             except Exception:
+                                logger.info(f"NOOOO '{tool_call_name}'")
                                 search_results = None
                             if search_results is not None and search_results.hits:
                                 ranked = await rerank_search_results(llm, lc_msgs, search_results, token_usage)
@@ -414,14 +417,40 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                                 tool_call_id = "rerank_results"
                                 tool_call_name = "rerank_results"
                                 tool_results_str = json.dumps(parsed)
+                                rerank_summary = ranked.summary
+
                                 # logger.info(f"Reranked search results: {json.dumps(parsed, indent=2)}")
 
+                        logger.info(f"tool_call_id {tool_call_id}")
                         # To UI we send the full search results (30)
                         for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
                             yield _chunk
                         # But for the conversation history and future tool calls, we cap it to 10 to avoid token overload
                         lc_history_str = json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
                         lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
+
+                    # If we reranked, the summary already contains the user-facing response.
+                    # Skip another LLM iteration and stream the summary as the final assistant message.
+                    if rerank_summary:
+                        summary_msg_id = uuid.uuid4().hex
+                        conv.msg_id = summary_msg_id
+                        yield sse(
+                            TextMessageStartEvent(
+                                message_id=summary_msg_id, role="assistant", timestamp=get_timestamp()
+                            )
+                        )
+                        yield sse(TextMessageChunkEvent(delta=rerank_summary, timestamp=get_timestamp()))
+                        yield sse(TextMessageEndEvent(message_id=summary_msg_id, timestamp=get_timestamp()))
+                        conv.items.append(
+                            MessageItem(
+                                id=summary_msg_id,
+                                role="assistant",
+                                content=[TextPart(text=rerank_summary)],
+                                metadata={"model": conv.model},
+                            )
+                        )
+                        final_text = rerank_summary
+                        break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
     finally:
@@ -500,9 +529,6 @@ async def rerank_search_results(
     ]
     try:
         # Call LLM with structured output for reranking.
-        # vllm/qwen-coder is unreliable at honoring forced tool_choice (function_calling) and
-        # frequently returns an empty assistant message (parsed=None). json_schema asks the model
-        # to emit JSON text matching the schema, which qwen handles reliably.
         llm_structured_rerank = llm.with_structured_output(RerankingOutput, method="json_schema", include_raw=True)
         resp = llm_structured_rerank.invoke(rerank_msgs)
         # logger.info(f"Reranking with context:\n{resp}")

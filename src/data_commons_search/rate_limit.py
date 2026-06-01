@@ -5,6 +5,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import text
 
 from data_commons_search.auth import UserInfo
+from data_commons_search.config import settings
 from data_commons_search.db import engine
 from data_commons_search.utils import logger
 
@@ -35,6 +36,8 @@ class RateLimiter:
 
     async def check(self, request: Request, user: UserInfo | None) -> None:
         """Check if the request is allowed under the rate limit. Raises `HTTPException` if not."""
+        if not settings.rate_limiting_enabled:
+            return
         if user:
             key = f"auth:{user.sub}"
             interval_seconds = INTERVAL_SEC_AUTH

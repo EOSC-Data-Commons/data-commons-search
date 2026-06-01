@@ -127,9 +127,12 @@ LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 
 OPENSEARCH_URL=http://localhost:9200
+REDIS_URL=redis://localhost:6379
 POSTGRES_USER=app
 POSTGRES_USER=app_password
 POSTGRES_HOST=localhost
+LOG_CONFIG=logging.dev.yml
+RATE_LIMITING_ENABLED=False
 ```
 
 ### ⚡️ Start dev server
@@ -141,7 +144,7 @@ POSTGRES_HOST=localhost
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
 
 ```sh
-uv run --all-extras uvicorn src.data_commons_search.main:app --log-config logging.yml --reload
+uv run --all-extras uvicorn src.data_commons_search.main:app --reload
 ```
 
 > Default `OPENSEARCH_URL=http://localhost:9200`
@@ -149,7 +152,7 @@ uv run --all-extras uvicorn src.data_commons_search.main:app --log-config loggin
 Customize server port through environment variable:
 
 ```sh
-OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --log-config logging.yml --reload
+OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 > [!NOTE]

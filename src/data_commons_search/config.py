@@ -8,25 +8,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Define the service settings for the server that can be set using environment variables."""
 
-    # Seach results settings
-    search_results_count: int = 20
-
-    filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
-    tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
-
     # Server settings
     server_port: int = 8000
     server_host: str = "0.0.0.0"  # noqa: S104
     cors_enabled: bool = True
-    debug_enabled: bool = False
+    rate_limiting_enabled: bool = True
     # Set to False for local HTTP dev (browsers drop Secure cookies over plain HTTP). Keep True in prod.
     cookie_secure: bool = True
+    debug_enabled: bool = False
+
+    filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
+    tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
 
     # OpenSearch settings
     # opensearch_index: str = "test_datacite"
     opensearch_index: str = "20260507_datacite"
     opensearch_url: str = "http://opensearch:9200"
     opensearch_pipeline: str = "rrf-pipeline"
+    search_results_count: int = 20
 
     postgres_password: str = "postgres"  # noqa: S105
     postgres_user: str = "postgres"

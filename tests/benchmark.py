@@ -121,9 +121,9 @@ class Condition:
 def all_conditions() -> list[Condition]:
     llm_models = [
         "einfracz/qwen3-coder",
-        "einfracz/gpt-oss-120b",
-        "einfracz/kimi-k2.5",
-        "einfracz/deepseek-v3.2",
+        # "einfracz/gpt-oss-120b",
+        # "einfracz/kimi-k2.5",
+        # "einfracz/deepseek-v3.2",
         # "einfracz/glm-5",
     ]
     # When adding a new axis, nest loops here:
