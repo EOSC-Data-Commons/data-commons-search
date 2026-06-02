@@ -1,5 +1,16 @@
 # 🪵 Changelog
 
+## [0.7.3](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.2..v0.7.3) - 2026-06-02
+
+### ⛰️ Features
+
+- Use opensearch hybrid search (knn + bm25) whens earching for datasets - ([9bc888a](https://github.com/EOSC-Data-Commons/data-commons-search/commit/9bc888a9acaf036aa494a4da85bfb7280cacd5ed))
+- Improve logging, enable debug in dev, enable to disable rate limiting for when running benchmark, add rate limit table - ([9c803f8](https://github.com/EOSC-Data-Commons/data-commons-search/commit/9c803f869bdb80a8ca443f6242b4687c795f9e7c))
+
+### 🚜 Refactor
+
+- Rename `EINFRACZ_API_KEY` to `CESNET_API_KEY` - ([5a170df](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5a170df5e7336b01bc338aa3e49aac921c86ee0a))
+
 ## [0.7.2](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.1..v0.7.2) - 2026-05-29
 
 ### 🐛 Bug Fixes
