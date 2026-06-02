@@ -115,7 +115,7 @@ uv run --all-extras pre-commit install
 Create a `keys.env` file with your LLM provider API key(s), and optionally other configurations:
 
 ```sh
-EINFRACZ_API_KEY=YOUR_API_KEY
+CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
 OPENROUTER_API_KEY=YOUR_API_KEY
 
@@ -190,7 +190,7 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > Find available model from Cesnet provider:
 >
 > ```sh
-> curl -H "Authorization: Bearer $EINFRACZ_API_KEY" https://llm.ai.e-infra.cz/v1/models | jq ".data[].id"
+> curl -H "Authorization: Bearer $CESNET_API_KEY" https://llm.ai.e-infra.cz/v1/models | jq ".data[].id"
 > ```
 >
 > Recommended model: `einfracz/qwen3-coder` or `einfracz/gpt-oss-120b` (smaller, faster)
@@ -239,7 +239,7 @@ uv build
 Create a `keys.env` file with the API keys:
 
 ```sh
-EINFRACZ_API_KEY=YOUR_API_KEY
+CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
 OPENROUTER_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
@@ -261,7 +261,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       OPENSEARCH_URL: "http://opensearch:9200"
-      EINFRACZ_API_KEY: "${EINFRACZ_API_KEY}"
+      CESNET_API_KEY: "${CESNET_API_KEY}"
 ```
 
 Build and deploy the service:
