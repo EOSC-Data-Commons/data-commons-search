@@ -75,7 +75,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     """
     provider, model_name = model.split("/", maxsplit=1)
 
-    if provider == "einfracz":
+    if provider == "cesnet" or provider == "einfracz":
         # LiteLLM API https://llm.ai.e-infra.cz
         return ChatOpenAI(
             base_url="https://llm.ai.e-infra.cz/v1",
@@ -90,15 +90,15 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
         #     api_key=settings.cesnet_api_key,
         #     max_tokens=settings.llm_max_tokens,
         # )
-    if provider == "einfraczopenwebui":
-        # OpenWebUI API https://chat.ai.e-infra.cz
-        return ChatOpenAI(
-            base_url="https://llm.ai.e-infra.cz/v1",
-            model=model_name,
-            api_key=SecretStr(settings.cesnet_api_key),
-            max_completion_tokens=settings.llm_max_tokens,
-            callbacks=callbacks,
-        )
+    # if provider == "cesnetopenwebui":
+    #     # OpenWebUI API https://chat.ai.e-infra.cz
+    #     return ChatOpenAI(
+    #         base_url="https://llm.ai.e-infra.cz/v1",
+    #         model=model_name,
+    #         api_key=SecretStr(settings.cesnet_api_key),
+    #         max_completion_tokens=settings.llm_max_tokens,
+    #         callbacks=callbacks,
+    #     )
 
     if provider == "openrouter":
         # https://openrouter.ai/docs/community/lang-chain

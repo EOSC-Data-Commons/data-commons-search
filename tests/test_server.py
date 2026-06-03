@@ -12,10 +12,10 @@ from tests.benchmark import TestItem, test_items
 # When running the tests, ensure the server is running on port 8000
 server_port = 8000
 llm_models = [
-    "einfracz/qwen3-coder",
-    # "einfracz/gpt-oss-120b",
-    # "einfracz/kimi-k2.5",
-    # "einfracz/deepseek-v3.2",
+    "cesnet/qwen3-coder",
+    # "cesnet/gpt-oss-120b",
+    # "cesnet/kimi-k2.5",
+    # "cesnet/deepseek-v3.2",
 ]
 
 # "Datasets about emoji" search should match "ACCOMOJI" in https://www.swissubase.ch/en/catalogue/search?q=emojis&p=0&ps=10&sn=ref-number&sd=desc

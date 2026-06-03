@@ -1,6 +1,6 @@
 """Tests for database persistence functions against a real PostgreSQL database."""
 
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -90,7 +90,7 @@ def test_messages_roundtrip_correctly(user) -> None:
     ]
     store_messages(user=user, thread_id="t1", items=items)
 
-    detail = get_conversation(user.sub, "t1")
+    detail: Any = get_conversation(user.sub, "t1")
     assert detail is not None
     assert detail.thread_id == "t1"
     assert len(detail.items) == 2
@@ -108,7 +108,7 @@ def test_tool_call_and_result_roundtrip(user):
     items = [msg("user", "Search CO2"), tool_call, tool_result]
     store_messages(user=user, thread_id="t1", items=items)
 
-    detail = get_conversation(user.sub, "t1")
+    detail: Any = get_conversation(user.sub, "t1")
     assert detail is not None
     assert len(detail.items) == 3
     assert detail.items[0].type == "message"

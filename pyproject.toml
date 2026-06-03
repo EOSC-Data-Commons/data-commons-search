@@ -60,7 +60,6 @@ dev = [
     "pytest >=8.4.2",
     "pytest-asyncio >=1.2.0",
     "pytest-cov >=7.0.0",
-    "mypy >=1.18.0",
     "pre-commit >=4.5.1",
     "mcp[cli]",
     "rich >=13.0.0",
@@ -102,27 +101,14 @@ addopts = [
     "--cov-report=term-missing",
 ]
 
-[tool.mypy]
-files = ["src/"]
-strict = false
-implicit_reexport = true
-follow_imports = "normal"
-ignore_missing_imports = true
-pretty = true
-show_column_numbers = true
-warn_no_return = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-disallow_untyped_defs = true
-disallow_any_generics = true
-disallow_untyped_calls = false # needed due to _eval() not being typed in rdflib
+[tool.ty.src]
+include = ["src"]
 
+[tool.ty.terminal]
+output-format = "full"
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-warn_no_return = false
-
+[tool.ty.rules]
+unused-ignore-comment = "warn"
 
 
 [tool.ruff]

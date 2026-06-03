@@ -403,25 +403,23 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                             tool_results_str = ""
 
                         # If the first tool call returned search results, rerank them with the LLM
-                        logger.info(f"YEAAAH Original search results for tool call '{tool_call_name}'")
                         if parsed is not None:
                             try:
-                                logger.info(f"YEAAAH2 Original search results for tool call '{tool_call_name}'")
                                 search_results = OpenSearchResults.model_validate(parsed)
                             except Exception:
-                                logger.info(f"NOOOO '{tool_call_name}'")
                                 search_results = None
                             if search_results is not None and search_results.hits:
-                                ranked = await rerank_search_results(llm, lc_msgs, search_results, token_usage)
-                                parsed = ranked.model_dump(by_alias=True)
                                 tool_call_id = "rerank_results"
                                 tool_call_name = "rerank_results"
+                                for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, {}, msg_id):
+                                    yield _chunk
+                                ranked = await rerank_search_results(llm, lc_msgs, search_results, token_usage)
+                                parsed = ranked.model_dump(by_alias=True)
                                 tool_results_str = json.dumps(parsed)
                                 rerank_summary = ranked.summary
 
                                 # logger.info(f"Reranked search results: {json.dumps(parsed, indent=2)}")
 
-                        logger.info(f"tool_call_id {tool_call_id}")
                         # To UI we send the full search results (30)
                         for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
                             yield _chunk
@@ -429,27 +427,9 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                         lc_history_str = json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
                         lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
 
-                    # If we reranked, the summary already contains the user-facing response.
-                    # Skip another LLM iteration and stream the summary as the final assistant message.
+                    # If rerank_summary already generated, then we dont need 1 more iteration with the LLM to generate the response,
+                    # we can directly use the rerank_summary as the final response
                     if rerank_summary:
-                        summary_msg_id = uuid.uuid4().hex
-                        conv.msg_id = summary_msg_id
-                        yield sse(
-                            TextMessageStartEvent(
-                                message_id=summary_msg_id, role="assistant", timestamp=get_timestamp()
-                            )
-                        )
-                        yield sse(TextMessageChunkEvent(delta=rerank_summary, timestamp=get_timestamp()))
-                        yield sse(TextMessageEndEvent(message_id=summary_msg_id, timestamp=get_timestamp()))
-                        conv.items.append(
-                            MessageItem(
-                                id=summary_msg_id,
-                                role="assistant",
-                                content=[TextPart(text=rerank_summary)],
-                                metadata={"model": conv.model},
-                            )
-                        )
-                        final_text = rerank_summary
                         break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
@@ -632,10 +612,10 @@ app.include_router(auth_router)
 # NOTE: commented out for now as this is done directly from the frontend when a user show interest for a dataset (e.g. clicks on it)
 
 # # https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
-# # https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=einfracz%2Fqwen3-coder
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "einfracz/qwen3-coder", "stream": true}'
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "einfracz/qwen3-coder", "stream": true}'
+# # https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=cesnet%2Fqwen3-coder
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "cesnet/qwen3-coder", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "cesnet/qwen3-coder", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "cesnet/qwen3-coder", "stream": true}'
 # async def get_relevant_tools(search_hits: list[SearchHit]) -> None:
 #     """Fetch file extensions and relevant tools from the FileMetrix API in parallel for each hit's DOI,
 #     and update hits in-place.

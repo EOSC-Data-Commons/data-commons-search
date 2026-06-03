@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     reranker_model: str = "Xenova/ms-marco-MiniLM-L-12-v2"
 
     # LLM providers API keys
-    default_llm_model: str = "einfracz/qwen3-coder"
+    default_llm_model: str = "cesnet/qwen3-coder"
     # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
     # default_llm_model: str = "mistralai/mistral-medium-latest"
     cesnet_api_key: str = ""
