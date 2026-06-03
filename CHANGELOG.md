@@ -1,5 +1,11 @@
 # 🪵 Changelog
 
+## [0.7.4](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.3..v0.7.4) - 2026-06-03
+
+### 🧪 Testing
+
+- Rename `einfracz` for models provider to `cesnet`, update type checker to use `ty` instead of `mypy` - ([334292d](https://github.com/EOSC-Data-Commons/data-commons-search/commit/334292dbbcb2a30ea18afdda4c2d9eee7137c7bb))
+
 ## [0.7.3](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.2..v0.7.3) - 2026-06-02
 
 ### ⛰️ Features
