@@ -60,7 +60,9 @@ async def search_data(
     # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
 
     # Define filters
-    filters = [
+    filters: list[dict[str, Any]] = [
+        # NOTE: Quality gate: only keep records that actually carry a description. We don't want that
+        # {"nested": {"path": "descriptions", "query": {"exists": {"field": "descriptions.description"}}}},
         # TODO: latest indexing does not seems to include resourceTypeGeneral field
         # {
         #     "nested": {
@@ -170,8 +172,24 @@ async def search_data(
         hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
     )
     logger.debug(f"search_data: OpenSearch (no rerank) took {t_search_elapsed * 1000:.1f} ms for {len(res.hits)} hits")
+    logger.debug(
+        "search_data candidates: "
+        + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.opensearch_score:.3f}" for h in res.hits)
+    )
 
     # # Cross-encoder reranking
+    # TODO: use
+    # curl -X POST https://llm.ai.e-infra.cz/v1/rerank \
+    #     -H "Content-Type: application/json" \
+    #     -H "Authorization: Bearer $CESNET_API_KEY" \
+    #     -d '{
+    #         "model": "qwen3-reranker-4b",
+    #         "query": "What is the capital of France?",
+    #         "documents": [
+    #             "Paris is the capital of France.", "Berlin is the capital of Germany.",
+    #         ],
+    #         "top_n": 4
+    #     }'
     # if res.hits:
     #     t_rerank_start = time.perf_counter()
     #     documents = []

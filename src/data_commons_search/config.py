@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
     reranker_model: str = "Xenova/ms-marco-MiniLM-L-12-v2"
+    # reranker_url: str = "https://llm.ai.e-infra.cz/v1/rerank"
 
     # LLM providers API keys
     default_llm_model: str = "cesnet/qwen3-coder"
@@ -61,6 +62,12 @@ class Settings(BaseSettings):
     oidc_config_url: str = "https://aai-dev.egi.eu/auth/realms/egi/.well-known/openid-configuration"
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
+    # Public base URL of this service as reached from the browser (e.g. https://dev.matchmaker.eosc-data-commons.eu/api/search")
+    # Used to build the OIDC redirect_uri
+    public_url: str = ""
+    # Hosts allowed as post-login redirect targets for external systems using /auth/login?redirect=...
+    # Entries starting with "." match the host and any subdomain (e.g. ".eosc-data-commons.eu").
+    allowed_redirect_hosts: list[str] = [".eosc-data-commons.eu"]
 
     logs_filepath: str = "./data/logs/conversations.jsonl"
 

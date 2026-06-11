@@ -4,7 +4,7 @@ import base64
 import hashlib
 import secrets
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Response
@@ -248,9 +248,47 @@ def generate_pkce_pair() -> tuple[str, str]:
     return code_verifier, code_challenge
 
 
+def _callback_url(request: Request) -> str:
+    """Build the OIDC `redirect_uri`."""
+    base = settings.public_url or str(request.base_url)
+    return base.rstrip("/") + "/auth/callback"
+
+
+def _is_safe_redirect(request: Request, redirect: str) -> bool:
+    """Check whether a post-login redirect target is allowed.
+
+    Relative paths (same-origin) are always allowed. Absolute URLs must use
+    https (or match our own origin) and target an allowlisted host.
+    """
+    parsed = urlparse(redirect)
+    # Relative path (e.g. "/dashboard"): same-origin, always safe
+    if not parsed.scheme and not parsed.netloc:
+        return redirect.startswith("/") and not redirect.startswith("//")
+    # Same origin as the current request is always allowed
+    base = urlparse(str(request.base_url))
+    if (parsed.scheme, parsed.hostname) == (base.scheme, base.hostname):
+        return True
+    # External targets must be https and on an allowlisted host
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    for entry in settings.allowed_redirect_hosts:
+        allowed = entry.lower()
+        if allowed.startswith("."):
+            if host == allowed[1:] or host.endswith(allowed):
+                return True
+        elif host == allowed:
+            return True
+    return False
+
+
 @router.get("/auth/login")
-async def auth_login(request: Request) -> RedirectResponse:
-    """Redirect to OpenID Connect provider for authentication."""
+async def auth_login(request: Request, redirect: str | None = None) -> RedirectResponse:
+    """Redirect to OpenID Connect provider for authentication.
+
+    Optional `redirect` query param sets where the user is sent after a successful
+    login (defaults to "/"). External targets must pass the allowlist check.
+    """
     if not settings.oidc_client_id:
         raise HTTPException(status_code=500, detail="OpenID Connect not configured")
 
@@ -265,7 +303,7 @@ async def auth_login(request: Request) -> RedirectResponse:
         "client_id": settings.oidc_client_id,
         "response_type": "code",
         "scope": "openid email profile voperson_id",  # TODO: offline_access
-        "redirect_uri": str(request.base_url).rstrip("/") + "/auth/callback",
+        "redirect_uri": _callback_url(request),
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
@@ -293,6 +331,18 @@ async def auth_login(request: Request) -> RedirectResponse:
         # samesite="none",
         max_age=600,
     )
+    # Store the validated post-login redirect target (used by /auth/callback)
+    if redirect and _is_safe_redirect(request, redirect):
+        response.set_cookie(
+            key="post_login_redirect",
+            value=redirect,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite="lax",
+            max_age=600,
+        )
+    elif redirect:
+        logger.warning(f"Rejected disallowed post-login redirect target: {redirect}")
     return response
 
 
@@ -321,7 +371,7 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
                 "client_id": settings.oidc_client_id,
                 "client_secret": settings.oidc_client_secret,
                 "code": code,
-                "redirect_uri": str(request.base_url) + "auth/callback",
+                "redirect_uri": _callback_url(request),
                 "code_verifier": code_verifier,
             },
             headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -331,8 +381,11 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
             raise HTTPException(status_code=400, detail="Token exchange failed")
         tokens = resp.json()
 
-    # Redirect to home page with tokens stored in HttpOnly cookies
-    response = RedirectResponse(url="/")
+    # Redirect to the requested post-login target (re-validated) or home page
+    redirect_target = request.cookies.get("post_login_redirect")
+    if not redirect_target or not _is_safe_redirect(request, redirect_target):
+        redirect_target = "/"
+    response = RedirectResponse(url=redirect_target)
     _set_auth_cookies(
         response,
         tokens.get("access_token"),
@@ -344,6 +397,7 @@ async def auth_callback(request: Request, state: str, code: str | None = None) -
     # Clear the state and PKCE cookies
     response.delete_cookie(key="oauth_state")
     response.delete_cookie(key="pkce_verifier")
+    response.delete_cookie(key="post_login_redirect")
     logger.info(tokens)
     logger.info(f"User authenticated successfully via OIDC.\nRefresh token: {tokens.get('refresh_token')}")
     logger.info(f"export ACCESS_TOKEN={tokens.get('access_token')}")
