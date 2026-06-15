@@ -1,5 +1,15 @@
 # 🪵 Changelog
 
+## [0.7.5](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.4..v0.7.5) - 2026-06-15
+
+### ⛰️ Features
+
+- Add `aup_accepted` field to `User` table to record datetime when they last accepted the AUP (in case it changes), enable to pass custom redirect_uri to login endpoint, add public_url global config to pass the exact public URL (to be used for auth redirect_uri) - ([b655283](https://github.com/EOSC-Data-Commons/data-commons-search/commit/b655283a543b78b9f541d22785b9384a2d19981e))
+
+### 🐛 Bug Fixes
+
+- Fix litellm max token blunder, improve search results (reduce score of records with no description), pass redirect_url when provided to auth endpoint - ([5256337](https://github.com/EOSC-Data-Commons/data-commons-search/commit/525633757f617035cb2ef8350da99c7691344948))
+
 ## [0.7.4](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.3..v0.7.4) - 2026-06-03
 
 ### 🧪 Testing
