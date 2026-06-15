@@ -21,11 +21,22 @@ class Settings(BaseSettings):
     tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
 
     # OpenSearch settings
-    # opensearch_index: str = "test_datacite"
-    opensearch_index: str = "20260507_datacite"
+    opensearch_index: str = "test_datacite"
+    # opensearch_index: str = "20260507_datacite"
     opensearch_url: str = "http://opensearch:9200"
-    opensearch_pipeline: str = "rrf-pipeline"
     search_results_count: int = 20
+    # knn candidate pool retrieved and combined before trimming to search_results_count. Must be MUCH
+    # larger than search_results_count: a small pool drops relevant near-duplicates and makes min_max
+    # normalization swing wildly
+    candidate_pool: int = 100
+    # Hybrid combination weights [knn (semantic), keyword (BM25)]
+    hybrid_weights: list[float] = [0.6, 0.4]
+    # Small soft penalty (0..1) applied to the keyword score of records lacking a description
+    # description_penalty: float = 0.05
+    description_penalty: float = 0.1
+    # Boost (not hard filter) for records whose dates.date falls in a requested range
+    # Boosting ranks in-range records higher while keeping undated/out-of-range ones available. <=1.0 effectively disables the boost
+    date_boost: float = 2.0
 
     postgres_password: str = "postgres"  # noqa: S105
     postgres_user: str = "postgres"
@@ -64,7 +75,7 @@ class Settings(BaseSettings):
     oidc_client_secret: str = ""
     # Public base URL of this service as reached from the browser (e.g. https://dev.matchmaker.eosc-data-commons.eu/api/search")
     # Used to build the OIDC redirect_uri
-    public_url: str = ""
+    api_public_url: str = ""
     # Hosts allowed as post-login redirect targets for external systems using /auth/login?redirect=...
     # Entries starting with "." match the host and any subdomain (e.g. ".eosc-data-commons.eu").
     allowed_redirect_hosts: list[str] = [".eosc-data-commons.eu"]

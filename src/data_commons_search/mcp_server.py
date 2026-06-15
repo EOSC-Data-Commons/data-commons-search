@@ -55,6 +55,7 @@ async def search_data(
     Returns:
         Results from OpenSearch (total_found, hits[])
     """
+
     # Generate embedding for the query
     embedding = next(iter(embedding_model.embed([search_input])))
     # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
@@ -71,24 +72,28 @@ async def search_data(
         #     }
         # }
     ]
-    logger.debug(
+    logger.info(
         f"Search: `{search_input}` | start_date: {start_date} | end_date: {end_date} | creator_name: {creator_name}"
     )
 
+    # Soft date handling: a requested range boosts in-range records instead of excluding out-of-range or
+    # undated ones. dates.date is usually the publication date, not the data's temporal coverage, so a hard
+    # filter wrongly drops relevant records (e.g. a 1960-2020 dataset published in 2023). Kept out of the
+    # hard `filters` list so it never removes records from either channel.
+    date_boost_clause: dict[str, Any] | None = None
     if start_date or end_date:
         date_range = {"format": "yyyy-MM-dd"}
         if start_date:
             date_range["gte"] = start_date
         if end_date:
             date_range["lte"] = end_date
-        filters.append(
-            {
-                "nested": {
-                    "path": "dates",
-                    "query": {"range": {"dates.date": date_range}},
-                }
+        date_boost_clause = {
+            "nested": {
+                "path": "dates",
+                "query": {"range": {"dates.date": date_range}},
+                "boost": settings.date_boost,
             }
-        )
+        }
 
     # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
     if creator_name:
@@ -111,7 +116,7 @@ async def search_data(
 
     emb: dict[str, Any] = {
         "vector": embedding.tolist(),
-        "k": settings.search_results_count,
+        "k": settings.candidate_pool,
     }
     if filters:
         emb["filter"] = {"bool": {"must": filters}}
@@ -120,18 +125,29 @@ async def search_data(
         "multi_match": {
             "query": search_input,
             "fields": [
-                "titles.title^2",
+                # "titles.title^2",
+                "titles.title",
                 "descriptions.description",
-                "subjects.subject^1.5",
+                "subjects.subject",
+                # "subjects.subject^1.5",
                 # TODO: add more fields?
             ],
         }
     }
-    if filters:
-        keyword_query = {"bool": {"must": [keyword_query], "filter": filters}}
+    # NOTE: the description penalty is applied after search on the final hit scores
+    # (see below). An in-query function_score is a no-op under the RRF pipeline, which is rank-based
+    # and discards score magnitude.
+    # Wrap the keyword query when we have hard filters (creator) and/or a soft date boost.
+    if filters or date_boost_clause:
+        bool_query: dict[str, Any] = {"must": [keyword_query]}
+        if filters:
+            bool_query["filter"] = filters
+        if date_boost_clause:
+            bool_query["should"] = [date_boost_clause]
+        keyword_query = {"bool": bool_query}
 
     body = {
-        "size": settings.search_results_count,
+        "size": settings.candidate_pool,
         "_source": [
             "titles",
             "subjects",
@@ -152,6 +168,31 @@ async def search_data(
                 ],
             }
         },
+        # Inline search pipeline: min_max normalization makes the weights
+        # actually affect ranking (RRF is rank-based and ignores score magnitude)
+        "search_pipeline": {
+            "phase_results_processors": [
+                {
+                    "normalization-processor": {
+                        "normalization": {"technique": "min_max"},
+                        "combination": {
+                            "technique": "arithmetic_mean",
+                            "parameters": {"weights": settings.hybrid_weights},
+                        },
+                    }
+                }
+                ## RRF alternative
+                # {
+                #     "score-ranker-processor": {
+                #         "combination": {
+                #         "technique": "rrf",
+                #         "rank_constant": 40,
+                #         "parameters": { "weights": [0.4, 0.6] }
+                #         }
+                #     }
+                # }
+            ]
+        },
     }
     # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
@@ -160,16 +201,32 @@ async def search_data(
         resp = opensearch_client.search(
             index=settings.opensearch_index,
             body=body,
-            params={"search_pipeline": settings.opensearch_pipeline},
+            # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies, so
+            # near-tied results don't flip between identical queries (primary/replica IDF divergence).
+            search_type="dfs_query_then_fetch",
+            preference="data-commons-search",
         )
     except Exception as e:
         logger.error(f"OpenSearch query failed: {e}")
         return OpenSearchResults(total_found=0, hits=[])
     t_search_elapsed = time.perf_counter() - t_search_start
     # Extract hits from OpenSearch response
+    raw_hits = resp.get("hits", {}).get("hits", [])
+
+    # Soft description penalty applied on the final score (works under any pipeline, incl. rank-based RRF
+    # which ignores in-query score tweaks): demote records without a description, then re-sort.
+    if settings.description_penalty < 1.0:
+        for hit in raw_hits:
+            descriptions = hit.get("_source", {}).get("descriptions") or []
+            has_desc = any(isinstance(d, dict) and d.get("description") for d in descriptions)
+            if not has_desc and hit.get("_score") is not None:
+                hit["_score"] *= settings.description_penalty
+        raw_hits = sorted(raw_hits, key=lambda h: h.get("_score") or 0.0, reverse=True)
+    # Trim the large candidate pool down to the number of results we actually return.
+    raw_hits = raw_hits[: settings.search_results_count]
     res = OpenSearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
-        hits=[SearchHit(**hit) for hit in resp.get("hits", {}).get("hits", [])],
+        hits=[SearchHit(**hit) for hit in raw_hits],
     )
     logger.debug(f"search_data: OpenSearch (no rerank) took {t_search_elapsed * 1000:.1f} ms for {len(res.hits)} hits")
     logger.debug(

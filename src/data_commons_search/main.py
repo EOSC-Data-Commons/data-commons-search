@@ -318,7 +318,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
             lc_msgs: list[AnyMessage] = [get_system_prompt(TOOL_CALL_PROMPT), *conv.to_langchain()]
 
             async with mcp_client.session("data-commons-search") as session:
-                for _ in range(MAX_AGENT_ITERATIONS):
+                for _iter in range(MAX_AGENT_ITERATIONS):
                     # Stream LLM response, accumulating chunks and forwarding text deltas
                     msg_id = uuid.uuid4().hex
                     conv.msg_id = msg_id
@@ -484,7 +484,7 @@ async def rerank_search_results(
     last_msg_content = last_msg.content if last_msg and isinstance(last_msg.content, str) else ""
     formatted_context = f"Found {search_results.total_found} datasets relevant to the query '{last_msg_content}':\n\n"
     for i, hit in enumerate(search_results.hits[: settings.search_results_count]):
-        formatted_context += f"{i + 1}. **{hit.id}**\n"
+        formatted_context += f"index {i + 1}:\n"
         formatted_context += f"   {' | '.join([title.title for title in hit.source.titles])}\n"
         if hit.source.dates:
             formatted_context += (
@@ -520,14 +520,15 @@ async def rerank_search_results(
         # Only keep the hits that were sent for reranking
         reranked_hits = search_results.hits[: settings.search_results_count]
 
-        # Add scores to the reranked datasets
-        score_lookup = {hit.url: hit.score for hit in rerank_resp.parsed.hits}
-        # print(f"Rerank response: {score_lookup}")
-        for hit in reranked_hits:
-            hit.score = score_lookup.get(hit.id, 0.0)
+        # Map LLM scores back by 1-based index (robust: small integers, unlike opaque ids the LLM
+        # mistypes/omits). For any hit the LLM failed to score, fall back to its OpenSearch relevance
+        # score instead of 0.0 - a missed near-duplicate must NOT crater to the bottom.
+        score_by_index = {h.index: h.score for h in rerank_resp.parsed.hits}
+        for i, hit in enumerate(reranked_hits):
+            hit.score = score_by_index.get(i + 1, hit.opensearch_score)
 
         # Sort hits by score in descending order
-        reranked_hits.sort(key=lambda h: h.score or 0.0, reverse=True)
+        reranked_hits.sort(key=lambda h: h.score if h.score is not None else 0.0, reverse=True)
         # await get_relevant_tools(reranked_hits)
         return RankedSearchResponse(summary=rerank_resp.parsed.summary, hits=reranked_hits)
     except Exception as e:

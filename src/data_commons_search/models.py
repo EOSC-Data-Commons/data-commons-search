@@ -253,9 +253,14 @@ class RankedSearchResponse(BaseModel):
 
 
 class RankedHit(BaseModel):
-    """A search result with relevance score from the reranking step."""
+    """A search result with relevance score from the reranking step.
 
-    url: str
+    `index` is the 1-based position of the dataset in the numbered list shown to the LLM. Using the
+    index (a small integer) instead of an opaque DOI/id makes the LLM's output reliably matchable -
+    it can't mistype or omit a number the way it does long identifiers.
+    """
+
+    index: int
     score: float
 
 

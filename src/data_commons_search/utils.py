@@ -81,7 +81,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             base_url="https://llm.ai.e-infra.cz/v1",
             model=model_name,
             api_key=SecretStr(settings.cesnet_api_key),
-            max_completion_tokens=settings.llm_max_tokens,
+            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
             callbacks=callbacks,
         )
         # return ChatLiteLLM(

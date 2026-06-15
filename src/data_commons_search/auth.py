@@ -250,7 +250,7 @@ def generate_pkce_pair() -> tuple[str, str]:
 
 def _callback_url(request: Request) -> str:
     """Build the OIDC `redirect_uri`."""
-    base = settings.public_url or str(request.base_url)
+    base = settings.api_public_url or str(request.base_url)
     return base.rstrip("/") + "/auth/callback"
 
 
