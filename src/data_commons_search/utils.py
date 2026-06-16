@@ -90,6 +90,21 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
         #     api_key=settings.cesnet_api_key,
         #     max_tokens=settings.llm_max_tokens,
         # )
+    if provider == "fedllm":
+        # LiteLLM API https://llm.ai.egi.eu
+        return ChatOpenAI(
+            base_url="https://llm.ai.egi.eu/v1",
+            model=model_name,
+            api_key=SecretStr(settings.fedllm_api_key),
+            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
+            callbacks=callbacks,
+        )
+        # return ChatLiteLLM(
+        #     api_base="https://llm.ai.egi.eu/v1",
+        #     model=f"litellm_proxy/{model_name}",
+        #     api_key=settings.fedllm_api_key,
+        #     max_tokens=settings.llm_max_tokens,
+        # )
     # if provider == "cesnetopenwebui":
     #     # OpenWebUI API https://chat.ai.e-infra.cz
     #     return ChatOpenAI(

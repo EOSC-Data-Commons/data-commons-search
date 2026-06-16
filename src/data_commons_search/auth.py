@@ -34,12 +34,23 @@ DEFAULT_REFRESH_EXPIRY = 2592000  # 30 * 24 * 3600 = 30 days
 
 
 async def get_oidc_config() -> dict[str, Any]:
-    """Fetch and cache OIDC configuration from the provider."""
+    """Fetch and cache the OIDC discovery document from the provider.
+
+    Raises a clear 503 (instead of a bare 500) when the identity provider is unreachable or slow,
+    so an IdP outage does not surface as an opaque Internal Server Error.
+    """
     if "config" not in _oidc_config_cache:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(settings.oidc_config_url)
-            resp.raise_for_status()
-            _oidc_config_cache["config"] = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(settings.oidc_config_url)
+                resp.raise_for_status()
+                _oidc_config_cache["config"] = resp.json()
+        except (httpx.TimeoutException, httpx.HTTPStatusError, httpx.HTTPError) as exc:
+            logger.error(f"OIDC provider unreachable at {settings.oidc_config_url}: {type(exc).__name__}: {exc}")
+            raise HTTPException(
+                status_code=503,
+                detail="Identity provider is currently unreachable. Please try again later.",
+            ) from exc
     return _oidc_config_cache["config"]
 
 

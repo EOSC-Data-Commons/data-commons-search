@@ -58,7 +58,7 @@ test_items: list[TestItem] = [
         ],
     },
     {
-        "input": "What datasets are relevant for my project on climate-driven changes in bird densities?",
+        "input": "What datasets are relevant for my project on climate-driven changes in bird competition?",
         "lang": "en",
         "expected_results": [
             {
@@ -88,7 +88,7 @@ test_items: list[TestItem] = [
         ],
     },
     {
-        "input": "Datasets about CO2 published in the last 2 years",
+        "input": "Datasets about sources of greenhouse gas emissions in polders published in the last 3 years",
         "lang": "en",
         "expected_results": [
             {
@@ -274,9 +274,8 @@ def run_benchmark() -> None:
                         expected = {r["id"] for r in item["expected_results"]}
                         missing = expected - set(found_ids)
                         status_str = "[yellow]MISS[/]"
-                        note = (
-                            "no search" if not found_ids else f"{len(found_ids)} results, missing: {', '.join(missing)}"
-                        )
+                        retrieved = ", ".join(found_ids) if found_ids else "[]"
+                        note = f"missing: {', '.join(missing)} | retrieved: {retrieved}"
                     detail_rows.append((cr.condition.label(), short_query, status_str, f"{elapsed:.1f}s", note))
                 progress.advance(cond_task)
                 progress.advance(overall)

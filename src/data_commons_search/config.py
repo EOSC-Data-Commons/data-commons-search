@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
     # default_llm_model: str = "mistralai/mistral-medium-latest"
     cesnet_api_key: str = ""
+    fedllm_api_key: str = ""
     openrouter_api_key: str = ""
     llm_max_tokens: int = 8192  # or 4096
     llm_seed: int = 42
