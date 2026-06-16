@@ -136,7 +136,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.openrouter_api_key),
             max_completion_tokens=settings.llm_max_tokens,
-            stream_usage=True,  # include token usage in streamed responses
+            stream_usage=True,
             callbacks=callbacks,
             # default_headers={
             #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
@@ -144,17 +144,6 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             # },
         )
 
-    # if provider == "groq":
-    #     # https://python.langchain.com/docs/integrations/chat/groq/
-    #     from langchain_groq import ChatGroq
-
-    #     return ChatGroq(
-    #         model=model_name,
-    #         max_tokens=configuration.max_tokens,
-    #         temperature=configuration.temperature,
-    #         timeout=None,
-    #         max_retries=2,
-    #     )
     # if provider == "together":
     #     # https://python.langchain.com/docs/integrations/chat/together/
     #     from langchain_together import ChatTogether
@@ -178,30 +167,13 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     #             repetition_penalty=1.03,
     #         )
     #     )
-    # if provider == "azure":
-    #     # https://learn.microsoft.com/en-us/azure/ai-studio/how-to/develop/langchain
-    #     from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
-    #     return AzureAIChatCompletionsModel(
-    #         endpoint=settings.azure_inference_endpoint,
-    #         credential=settings.azure_inference_credential,
-    #         model_name=model_name,
-    #     )
-    # if provider == "deepseek":
-    #     # https://python.langchain.com/docs/integrations/chat/deepseek/
-    #     from langchain_deepseek import ChatDeepSeek
-    #     return ChatDeepSeek(
-    #         model=model_name,
-    #         temperature=configuration.temperature,
-    #     )
     return init_chat_model(
         model_name,
         model_provider=provider,
         # timeout=None,
         max_retries=2,
         callbacks=callbacks,
-        # max_tokens=configuration.max_tokens,
-        # temperature=configuration.temperature,
-        # seed=configuration.seed,
+        # max_tokens=settings.llm_max_tokens,
         # reasoning={
         #     "effort": "low",  # 'low', 'medium', or 'high'
         #     "summary": "auto",  # 'detailed', 'auto', or None

@@ -1,0 +1,37 @@
+---
+# garak config for jailbreak / prompt-injection testing of the /chat endpoint.
+# Run from repo root with the server already running:
+#   GARAK_CHAT_URL=http://localhost:8000/chat \
+#   PYTHONPATH=tests/security uv run garak --config tests/security/garak.yaml
+#
+# Scaling cost vs coverage:
+#   - generations + soft_probe_prompt_cap below keep a run small (each prompt is a
+#     real LLM call against your provider). Raise them for a deeper sweep.
+#   - probe_spec is a focused set relevant to a dataset-search assistant. Swap to
+#     `all` for a full scan, or add probes (see `uv run garak --list_probes`).
+
+system:
+  verbose: 0
+  parallel_attempts: 8   # concurrent prompts; lower if you hit provider rate limits
+
+run:
+  generations: 1               # responses sampled per prompt
+  soft_probe_prompt_cap: 40    # cap prompts per probe (keeps the run cheap)
+  eval_threshold: 0.5
+
+plugins:
+  target_type: function.Single
+  target_name: garak_target#generate
+  # Focused on the threats that actually matter for a tool-calling search app:
+  #   latentinjection  - indirect prompt injection via retrieved/tool content
+  #   promptinject     - direct "ignore previous instructions" injection
+  #   dan              - popular jailbreak personas (scope escape)
+  #   grandma          - social-engineering jailbreaks
+  #   encoding         - smuggling instructions past filters (base64/rot13/etc.)
+  probe_spec: latentinjection,promptinject,dan.Dan_11_0,dan.DAN_Jailbreak,grandma,encoding.InjectBase64
+  detector_spec: auto
+  extended_detectors: true
+
+reporting:
+  report_dir: garak_runs
+  report_prefix: data-commons-chat

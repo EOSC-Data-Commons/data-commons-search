@@ -24,7 +24,7 @@ The HTTP API comprises 2 main endpoints:
 >
 > It can also be used just as a MCP server through the pip package.
 
-## 🔌 Connect to MCP server
+## 🔌 Connect to the MCP server
 
 The system can be used directly as a MCP server using either STDIO, or Streamable HTTP transport.
 
@@ -32,13 +32,13 @@ The system can be used directly as a MCP server using either STDIO, or Streamabl
 >
 > You will need access to a pre-indexed OpenSearch instance for the MCP server to work.
 
-Follow the instructions of your client, and use the `/mcp` URL of your deployed server (e.g. http://localhost:8000/mcp)
+Follow the instructions of your client, and use the `/mcp` URL of the public server: https://matchmaker.eosc-data-commons.eu/api/search/mcp
 
 To add a new MCP server to **VSCode GitHub Copilot**:
 
 - Open the Command Palette (`ctrl+shift+p` or `cmd+shift+p`)
 - Search for `MCP: Add Server...`
-- Choose `HTTP`, and provide the MCP server URL http://localhost:8000/mcp
+- Choose `HTTP`, and provide the MCP server URL: https://matchmaker.eosc-data-commons.eu/api/search/mcp
 
 Your VSCode `mcp.json` should look like:
 
@@ -46,46 +46,11 @@ Your VSCode `mcp.json` should look like:
 {
     "servers": {
         "data-commons-search-http": {
-            "url": "http://localhost:8000/mcp",
+            "url": "https://matchmaker.eosc-data-commons.eu/api/search/mcp",
             "type": "http"
         }
     },
     "inputs": []
-}
-```
-
-Or with STDIO transport:
-
-```json
-{
-   "servers": {
-      "data-commons-search": {
-         "type": "stdio",
-         "command": "uvx",
-         "args": ["data-commons-search"],
-         "env": {
-            "OPENSEARCH_URL": "OPENSEARCH_URL"
-         }
-      }
-   }
-}
-```
-
-Or using local folder for development:
-
-```json
-{
-   "servers": {
-      "data-commons-search": {
-         "type": "stdio",
-         "cwd": "~/dev/data-commons-search",
-         "env": {
-            "OPENSEARCH_URL": "OPENSEARCH_URL"
-         },
-         "command": "uv",
-         "args": ["run", "data-commons-search"]
-      }
-   }
 }
 ```
 
@@ -96,7 +61,7 @@ Or using local folder for development:
 > Requirements:
 >
 > - [x] [`uv`](https://docs.astral.sh/uv/getting-started/installation/), to easily handle scripts and virtual environments
-> - [x] docker, to deploy the OpenSearch service (or just access to a running instance)
+> - [x] [docker](https://docs.docker.com/get-started/get-docker/), to deploy the database and OpenSearch service
 > - [x] API key for a LLM provider: [e-infra CZ](https://chat.ai.e-infra.cz/), [Mistral.ai](https://console.mistral.ai/api-keys), or [OpenRouter](https://openrouter.ai/)
 >
 
@@ -117,30 +82,60 @@ Create a **`keys.env`** file with your LLM provider API key(s), and optionally o
 ```sh
 CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
-OPENROUTER_API_KEY=YOUR_API_KEY
 
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
-
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
-
-OPENSEARCH_URL=http://localhost:9200
-REDIS_URL=redis://localhost:6379
-POSTGRES_USER=app
-POSTGRES_USER=app_password
 POSTGRES_HOST=localhost
+POSTGRES_USER=app
+POSTGRES_PASSWORD=app_password
 
 RATE_LIMITING_ENABLED=False
 LOG_LEVEL=DEBUG
 LOG_JSON=false
+
+OPENSEARCH_URL=http://localhost:9200
 ```
 
-### ⚡️ Start dev server
+### 💾 Database
+
+The search system needs to connect to a PostgreSQL database to store authenticated users conversations.
+
+Deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse), in these instructions we expect the `metadata-warehouse` folder to be alongside the `data-commons-search`,in the same folder.
+
+```sh
+cd ../metadata-warehouse
+docker compose up postgres
+```
+
+To initialize db, run from the `metadata-warehouse` repo:
+
+```sh
+uv run --directory scripts/postgres_data create_db.py --db appdb --reset
+```
 
 > [!IMPORTANT]
 >
-> The search system needs to connect to a PostgreSQL database to store authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse). See section below for more details on managing the database.
+> For publicly available environments you will want to update the `app` user password:
+>
+> ```sql
+> ALTER USER app WITH PASSWORD 'newpassword';
+> ```
+
+Reset db:
+
+```sh
+docker compose down --volumes --remove-orphans
+```
+
+Export the schema from `db.py` to the metadata-warehouse (command to run at the root of the data-commons-search repo):
+
+```sh
+uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/create_sql/appdb/tables.sql
+```
+
+### ⚡️ Start dev server
 
 Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
 
@@ -194,55 +189,15 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > curl -H "Authorization: Bearer $CESNET_API_KEY" https://llm.ai.e-infra.cz/v1/models | jq ".data[].id"
 > ```
 >
-> Recommended model: `cesnet/qwen3-coder` or `cesnet/gpt-oss-120b` (smaller, faster)
-
-### 💾 Database
-
-The search system needs to connect to a PostgreSQL database to store authenticated users conversations, deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse).
-
-```sh
-cd metadata-warehouse
-docker compose up postgres
-```
-
-Initialize db (from metadata-warehouse repo):
-
-```sh
-uv run --directory scripts/postgres_data create_db.py --db appdb --reset
-```
-
-> [!IMPORTANT]
->
-> For staging and production environments you will want to update the `app` user password: `ALTER USER app WITH PASSWORD 'newpassword';`
-
-Reset db:
-
-```sh
-docker compose down --volumes --remove-orphans
-```
-
-Export schema from `db.py` to metadata-warehouse (command to run at the root of the data-commons-search repo, and expect the metadata-warehouse folder to be alongside the data-commons-search folder in the same folder):
-
-```sh
-uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/create_sql/appdb/tables.sql
-```
-
-### 📦 Build for production
-
-Build binary in `dist/`
-
-```sh
-uv build
-```
+> Recommended model: `cesnet/qwen3-coder`
 
 ### 🐳 Deploy with Docker
 
-Create a `keys.env` file with the API keys:
+Create a `keys.env` file with the API keys (see above for complete example):
 
 ```sh
 CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
-OPENROUTER_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
 
@@ -271,17 +226,13 @@ Build and deploy the service:
 docker compose up
 ```
 
-> [!IMPORTANT]
->
-> Current deployment to staging server is done automatically through GitHub Actions at each push to the `main` branch.
->
-> When a push is made the workflow will:
->
-> - Pull the `main` branch from the frontend repository
-> - Build the frontend, and add it to `src/data_commons_search/webapp`
-> - Build the docker image for the server
-> - Publish the docker image as `main`/`latest`
-> - The staging infrastructure then automatically pull the `latest` version of the image and deploys it.
+### 📦 Build for production
+
+Build package in `dist/`:
+
+```sh
+uv build
+```
 
 ### ✅ Run tests
 
@@ -303,6 +254,12 @@ Run search benchmark:
 
 ```sh
 uv run tests/benchmark.py
+```
+
+Run tests for LLM jailbreak with [`garak`](https://github.com/NVIDIA/garak):
+
+```sh
+PYTHONPATH=tests/security uv run garak --config tests/security/garak.yaml
 ```
 
 ### 🧹 Format code and type check
@@ -327,26 +284,18 @@ uv cache clean
 
 ### 🏷️ Release process
 
-> [!IMPORTANT]
->
-> Get a PyPI API token at [pypi.org/manage/account](https://pypi.org/manage/account).
-
 Run the release script providing the version bump: `fix`, `minor`, or `major`
 
 ```sh
 .github/release.sh fix
 ```
 
-> [!TIP]
->
-> Add your PyPI token to your environment, e.g. in `~/.zshrc` or `~/.bashrc`:
->
-> ```sh
-> export UV_PUBLISH_TOKEN=YOUR_TOKEN
-> ```
+> This will create a git tag, github release, and publish a docker image
 
 ## 🤝 Acknowledments
 
 The LLM provider `cesnet` is a service provided by e-INFRA CZ and operated by CERIT-SC Masaryk University
 
 Computational resources were provided by the e-INFRA CZ project (ID:90254), supported by the Ministry of Education, Youth and Sports of the Czech Republic.
+
+The authentication provider is [EGI Check-in](https://www.egi.eu/service/check-in-internal/).
