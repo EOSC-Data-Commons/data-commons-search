@@ -19,17 +19,17 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console, ConsoleRenderable
 from rich.logging import RichHandler
 from rich.text import Text
 from rich.theme import Theme
 
-# ANSI constants kept for direct use in startup banners (see main.py).
-GREY = "\x1b[90m"
+# ANSI constants kept for direct use in startup banner (see main.py).
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
 BLUE = "\x1b[34m"
-YELLOW = "\x1b[33m"
+# GREY = "\x1b[90m"
+# YELLOW = "\x1b[33m"
 
 # Per-level abbreviation (<= 4 chars, so the level column stays tight) and style.
 LEVEL_STYLES: dict[str, tuple[str, str]] = {
@@ -45,9 +45,8 @@ TIME_FORMAT = "[%m/%d/%y %H:%M:%S]"
 # Dim the timestamp column; the message keeps rich's default highlighting.
 THEME = Theme({"log.time": "dim"})
 
-# Standard LogRecord attributes; anything else on a record is treated as a custom
-# `extra=` field and included in the JSON output.
-_RESERVED_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName"}
+# Standard LogRecord attributes plus framework-internal extras
+_RESERVED_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName", "color_message"}
 
 # Noisy third-party loggers kept at WARNING unless debugging.
 _LIBRARY_LOGGERS = ("httpx", "mcp", "opensearch")
@@ -73,6 +72,13 @@ class CompactRichHandler(RichHandler):
     def get_level_text(self, record: logging.LogRecord) -> Text:
         abbr, style = LEVEL_STYLES.get(record.levelname, (record.levelname[:4], "white"))
         return Text(abbr.ljust(4), style=style)
+
+    def render_message(self, record: logging.LogRecord, message: str) -> ConsoleRenderable:
+        # Parse raw ANSI codes (e.g. the startup banner's BOLD/BLUE/YELLOW) into
+        # rich styles; RichHandler otherwise renders them as literal "\x1b[1m" text.
+        if getattr(record, "markup", self.markup) or "\x1b" not in message:
+            return super().render_message(record, message)
+        return Text.from_ansi(message)
 
 
 class JsonFormatter(logging.Formatter):
@@ -131,4 +137,4 @@ def setup_logging(json_logs: bool = False, level: str = "INFO", debug: bool = Fa
     logging.getLogger("data_commons_search").setLevel("DEBUG" if debug else level)
 
 
-__all__ = ["BLUE", "BOLD", "GREY", "RESET", "YELLOW", "CompactRichHandler", "JsonFormatter", "setup_logging"]
+__all__ = ["BLUE", "BOLD", "RESET", "CompactRichHandler", "JsonFormatter", "setup_logging"]

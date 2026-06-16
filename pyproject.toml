@@ -49,10 +49,9 @@ agent = [
     "langchain >=1.3.0",
     "langchain-mcp-adapters >=0.2.2",
     "langchain-openai >=1.2.2",
-    "langfuse >=4.6.1",
-    # "langchain-litellm >=0.3.5",
     "langchain-mistralai >=1.1.5",
-    # "langchain-huggingface", # This will install torch and many heavy nvidia dependencies
+    # "langchain-litellm >=0.3.5",
+    "langfuse >=4.6.1",
 ]
 # gpu = ["fastembed-gpu >=0.7.4"]
 

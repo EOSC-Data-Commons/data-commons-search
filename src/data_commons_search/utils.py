@@ -85,8 +85,9 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             base_url="https://llm.ai.e-infra.cz/v1",
             model=model_name,
             api_key=SecretStr(settings.cesnet_api_key),
-            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
+            stream_usage=True,
             callbacks=callbacks,
+            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
         )
         # return ChatLiteLLM(
         #     api_base="https://llm.ai.e-infra.cz/v1",
@@ -100,7 +101,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             base_url="https://llm.ai.egi.eu/v1",
             model=model_name,
             api_key=SecretStr(settings.fedllm_api_key),
-            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
+            stream_usage=True,
             callbacks=callbacks,
         )
         # return ChatLiteLLM(
@@ -135,6 +136,7 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
             model=model_name,
             api_key=SecretStr(settings.openrouter_api_key),
             max_completion_tokens=settings.llm_max_tokens,
+            stream_usage=True,  # include token usage in streamed responses
             callbacks=callbacks,
             # default_headers={
             #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
@@ -211,19 +213,22 @@ def load_chat_model_with_fallback(
     model: str,
     configure: Callable[[BaseChatModel], Runnable] = lambda m: m,
     callbacks: Callbacks = None,
-) -> Runnable:
+) -> tuple[Runnable, str]:
     """Load `model` and wrap it so a provider rate-limit (HTTP 429) transparently
     retries on `settings.fallback_llm_model`.
 
     `configure` applies the same setup (e.g. `bind_tools` or `with_structured_output`)
     to both the primary and the fallback model, so the fallback is a drop-in replacement.
+
+    Returns:
+        Tuple of (configured Runnable, actual model name used)
     """
     primary = configure(load_chat_model(model, callbacks))
     fallback_model = settings.fallback_llm_model
     if not fallback_model or fallback_model == model:
-        return primary
+        return primary, model
     fallback = configure(load_chat_model(fallback_model, callbacks))
-    return primary.with_fallbacks([fallback], exceptions_to_handle=(RateLimitError,))
+    return primary.with_fallbacks([fallback], exceptions_to_handle=(RateLimitError,)), model
 
 
 # def get_msg_text(msg: BaseMessage) -> str:

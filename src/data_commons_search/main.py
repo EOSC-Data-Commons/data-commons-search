@@ -44,7 +44,7 @@ from data_commons_search.db import (
     init_postgres_storage,
     store_messages,
 )
-from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW, setup_logging
+from data_commons_search.logging import BLUE, BOLD, RESET, setup_logging
 from data_commons_search.mcp_server import mcp
 from data_commons_search.models import (
     AgentInput,
@@ -121,10 +121,10 @@ langfuse = Langfuse(
     host=settings.langfuse_base_url, public_key=settings.langfuse_public_key, secret_key=settings.langfuse_secret_key
 )
 
-logger.info(f"""💬 {BOLD}{BLUE}Search UI{RESET} started on {BOLD}{YELLOW}{settings.server_url}{RESET}
-⚡️ Streamable HTTP MCP server started on {BOLD}{settings.server_url}/mcp{RESET}
-🔓 Login on {BOLD}{settings.server_url}/auth/login{RESET}
-🔎 Using OpenSearch service on {BOLD}{settings.opensearch_url}{RESET}""")
+logger.info(f"""🔭 {BOLD}{BLUE}EOSC Data Commons Search API{RESET} · {BOLD}{settings.server_url}{RESET}
+⚡️ Streamable HTTP MCP server · {settings.server_url}/mcp
+🔓 Login · {settings.server_url}/auth/login
+🔎 OpenSearch · {BOLD}{settings.opensearch_url}{RESET}""")
 
 
 @app.post("/chat")
@@ -319,7 +319,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
             tools = await mcp_client.get_tools()
             # Rate-limit (HTTP 429) on the primary provider transparently falls back to
             # settings.fallback_llm_model. bind_tools is applied to both models.
-            llm_with_tools = load_chat_model_with_fallback(
+            llm_with_tools, used_model = load_chat_model_with_fallback(
                 search_input.model,
                 lambda m: m.bind_tools(tools),
                 callbacks=[langfuse_handler],
@@ -464,14 +464,14 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
             if isinstance(item, MessageItem) and item.role == "user":
                 last_user_msg = "\n".join(part.text for part in item.content if part.type == "text")
                 break
-        # logger.info(f'/chat "{last_user_msg}" | {time.monotonic() - t0:.2f}s | {token_usage.model_dump()}')
         logger.info(
             f'Completed query "{last_user_msg}" · {time.monotonic() - t0:.2f}s · {token_usage.model_dump()}',
             extra={
                 "endpoint": "/chat",
-                # "query": last_user_msg,
+                "model": used_model,
                 "duration": time.monotonic() - t0,
                 "token_usage": token_usage.model_dump(),
+                "query": last_user_msg,
                 "response": final_text,
             },
         )
@@ -480,6 +480,8 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                 json.dumps(
                     {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "model": used_model,
+                        "duration": time.monotonic() - t0,
                         "token_usage": token_usage.model_dump(),
                         "input": last_user_msg,
                         "response": final_text,
@@ -536,7 +538,7 @@ async def rerank_search_results(
     ]
     try:
         # Call LLM with structured output for reranking; rate-limit falls back to the fallback model.
-        llm_structured_rerank = load_chat_model_with_fallback(
+        llm_structured_rerank, _ = load_chat_model_with_fallback(
             model,
             lambda m: m.with_structured_output(RerankingOutput, method="json_schema", include_raw=True),
             callbacks=callbacks,
