@@ -112,7 +112,7 @@ Install pre-commit hooks:
 uv run --all-extras pre-commit install
 ```
 
-Create a `keys.env` file with your LLM provider API key(s), and optionally other configurations:
+Create a **`keys.env`** file with your LLM provider API key(s), and optionally other configurations:
 
 ```sh
 CESNET_API_KEY=YOUR_API_KEY
@@ -131,8 +131,9 @@ POSTGRES_USER=app
 POSTGRES_USER=app_password
 POSTGRES_HOST=localhost
 
-LOG_CONFIG=logging.dev.yml
 RATE_LIMITING_ENABLED=False
+LOG_LEVEL=DEBUG
+LOG_JSON=false
 ```
 
 ### ⚡️ Start dev server

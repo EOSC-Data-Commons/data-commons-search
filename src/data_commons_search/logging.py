@@ -1,66 +1,134 @@
-"""Small ANSI-colored logging formatter used by logging.yml.
+"""Unified logging for the app, uvicorn and libraries.
 
-This avoids external dependencies by injecting ANSI color codes into
-the levelname for terminal output. The formatter preserves the original
-record attribute values and only changes the displayed levelname.
+Two output formats, selected by `setup_logging(json_logs=...)`:
+
+* dev: a single `CompactRichHandler` (dimmed timestamp, compact colored level,
+  message, source `file:line` on the right).
+* prod/staging: JSON Lines on stdout (one object per line) for ELK ingestion.
+
+Logging is configured in code (see `main.py`) rather than via uvicorn's
+`--log-config`, so the format is consistent no matter how the app is launched.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sys
-from collections.abc import Mapping
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Any
 
-COLOR_MAP: Mapping[int, str] = {
-    logging.CRITICAL: "\x1b[1;35m",  # bright magenta
-    logging.ERROR: "\x1b[1;31m",  # bright red
-    logging.WARNING: "\x1b[1;33m",  # bright yellow
-    logging.INFO: "\x1b[1;32m",  # bright green
-    logging.DEBUG: "\x1b[1;34m",  # bright blue
-}
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.text import Text
+from rich.theme import Theme
+
+# ANSI constants kept for direct use in startup banners (see main.py).
 GREY = "\x1b[90m"
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
 BLUE = "\x1b[34m"
 YELLOW = "\x1b[33m"
 
+# Per-level abbreviation (<= 4 chars, so the level column stays tight) and style.
+LEVEL_STYLES: dict[str, tuple[str, str]] = {
+    "DEBUG": ("DBUG", "bold blue"),
+    "INFO": ("INFO", "bold green"),
+    "WARNING": ("WARN", "bold yellow"),
+    "ERROR": ("ERR", "bold red"),
+    "CRITICAL": ("CRIT", "bold magenta"),
+}
 
-class ColoredFormatter(logging.Formatter):
-    """Formatter that colors the levelname using ANSI escape sequences.
+TIME_FORMAT = "[%m/%d/%y %H:%M:%S]"
 
-    Usage in dictConfig / YAML config: use the special `()` key to point
-    at this class, e.g. `() : data_commons_search.logging.ColoredFormatter`.
-    """
+# Dim the timestamp column; the message keeps rich's default highlighting.
+THEME = Theme({"log.time": "dim"})
 
-    def __init__(self, fmt: str | None = None, datefmt: str | None = None, style: Literal["%", "{", "$"] = "%"):
-        super().__init__(fmt=fmt, datefmt=datefmt, style=style)
+# Standard LogRecord attributes; anything else on a record is treated as a custom
+# `extra=` field and included in the JSON output.
+_RESERVED_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName"}
 
-    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:  # noqa: N802
-        """Return the formatted time for a record, wrapped in GREY when on a TTY."""
-        ts = super().formatTime(record, datefmt=datefmt)
-        # Only color when the output is a TTY so log files remain plain.
-        if sys.stdout.isatty():
-            return f"{GREY}{ts}{RESET}"
-        return ts
+# Noisy third-party loggers kept at WARNING unless debugging.
+_LIBRARY_LOGGERS = ("httpx", "mcp", "opensearch")
+
+# Strip ANSI color codes (e.g. from the startup banner) out of JSON messages.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class CompactRichHandler(RichHandler):
+    """RichHandler with a dimmed time and a tight, abbreviated level column."""
+
+    def __init__(self, console: Console | None = None, **kwargs: Any) -> None:
+        kwargs.setdefault("show_time", True)
+        kwargs.setdefault("show_level", True)
+        kwargs.setdefault("show_path", True)
+        kwargs.setdefault("markup", False)
+        kwargs.setdefault("rich_tracebacks", True)
+        kwargs.setdefault("log_time_format", TIME_FORMAT)
+        super().__init__(console=console or Console(theme=THEME), **kwargs)
+        # Shrink the level column so there is a single space after "INFO".
+        self._log_render.level_width = 4
+
+    def get_level_text(self, record: logging.LogRecord) -> Text:
+        abbr, style = LEVEL_STYLES.get(record.levelname, (record.levelname[:4], "white"))
+        return Text(abbr.ljust(4), style=style)
+
+
+class JsonFormatter(logging.Formatter):
+    """Render each log record as a single JSON line for ELK ingestion."""
 
     def format(self, record: logging.LogRecord) -> str:
-        # Save original attributes in case other handlers rely on them
-        original_levelname = record.levelname
-        original_name = getattr(record, "name", None)
-        try:
-            color = COLOR_MAP.get(record.levelno, "")
-            if color and sys.stdout.isatty():
-                record.levelname = f"{color}{original_levelname}{RESET}"
-            # color the logger name in grey for TTY output
-            if original_name is not None and sys.stdout.isatty():
-                record.name = f"{GREY}{original_name}{RESET}"
-            return super().format(record)
-        finally:
-            # restore to original to avoid side effects
-            record.levelname = original_levelname
-            if original_name is not None:
-                record.name = original_name
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec="milliseconds")
+        data: dict[str, Any] = {
+            "timestamp": ts.replace("+00:00", "Z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": _ANSI_RE.sub("", record.getMessage()),
+            "module": record.module,
+            "func": record.funcName,
+            # "line": record.lineno,
+        }
+        if record.exc_info:
+            data["exception"] = self.formatException(record.exc_info)
+        if record.stack_info:
+            data["stack"] = self.formatStack(record.stack_info)
+        # Include any custom fields passed via `logger.info(..., extra={...})`.
+        for key, value in record.__dict__.items():
+            if key not in _RESERVED_ATTRS and not key.startswith("_"):
+                data[key] = value
+        return json.dumps(data, default=str, ensure_ascii=False)
 
 
-__all__ = ["ColoredFormatter"]
+def setup_logging(json_logs: bool = False, level: str = "INFO", debug: bool = False) -> None:
+    """Configure the root, uvicorn and library loggers with a single handler.
+
+    Args:
+        json_logs: emit JSON Lines (prod/staging) instead of rich console output (dev).
+        level: root/app log level.
+        debug: when True, raise uvicorn-access and library loggers to INFO/DEBUG.
+    """
+    handler: logging.Handler
+    if json_logs:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler = CompactRichHandler()
+
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(level)
+
+    # Route uvicorn through our handler instead of its own default handlers.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers = [handler]
+        lg.propagate = False
+
+    logging.getLogger("uvicorn.access").setLevel("INFO" if debug else "WARNING")
+    for name in _LIBRARY_LOGGERS:
+        logging.getLogger(name).setLevel("DEBUG" if debug else "WARNING")
+    logging.getLogger("data_commons_search").setLevel("DEBUG" if debug else level)
+
+
+__all__ = ["BLUE", "BOLD", "GREY", "RESET", "YELLOW", "CompactRichHandler", "JsonFormatter", "setup_logging"]

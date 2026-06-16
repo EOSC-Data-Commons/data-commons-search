@@ -6,11 +6,11 @@ the whole pipeline) with a batch of concurrent requests and reports time-to-firs
 the provider/response cache never serves a stored answer.
 
 Start the server first (e.g. `uv run data-commons-search` on port 8000), then:
-    uv run --env-file keys.env scripts/llm_stress_test.py                 # 5 concurrent, 1 round
-    uv run --env-file keys.env scripts/llm_stress_test.py -c 20           # 20 concurrent
-    uv run --env-file keys.env scripts/llm_stress_test.py -c 10 -r 3      # 10 concurrent x 3 rounds
-    uv run --env-file keys.env scripts/llm_stress_test.py --ramp 5,10,20  # escalate to find the limit
-    uv run --env-file keys.env scripts/llm_stress_test.py --url http://127.0.0.1:8000 -m cesnet/qwen3-coder
+    uv run --env-file keys.env scripts/stress_test.py                 # 5 concurrent, 1 round
+    uv run --env-file keys.env scripts/stress_test.py -c 20           # 20 concurrent
+    uv run --env-file keys.env scripts/stress_test.py -c 10 -r 3      # 10 concurrent x 3 rounds
+    uv run --env-file keys.env scripts/stress_test.py --ramp 5,10,20  # escalate to find the limit
+    uv run --env-file keys.env scripts/stress_test.py --url http://127.0.0.1:8000 -m cesnet/qwen3-coder
 """
 
 from __future__ import annotations

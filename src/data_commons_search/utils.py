@@ -3,12 +3,16 @@
 import logging
 import os
 import pathlib
+from collections.abc import Callable
 from datetime import datetime
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import SystemMessage
 from langchain_core.callbacks import Callbacks
+from langchain_core.runnables import Runnable
+from langchain_mistralai import ChatMistralAI
 from langchain_openai import ChatOpenAI
+from openai import RateLimitError
 from pydantic import BaseModel, SecretStr
 
 from data_commons_search.config import settings
@@ -115,6 +119,15 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     #         callbacks=callbacks,
     #     )
 
+    if provider == "mistralai":
+        # https://python.langchain.com/docs/integrations/chat/mistralai/
+        return ChatMistralAI(
+            model_name=model_name,
+            api_key=SecretStr(settings.mistral_api_key),
+            max_tokens=settings.llm_max_tokens,
+            callbacks=callbacks,
+        )
+
     if provider == "openrouter":
         # https://openrouter.ai/docs/community/lang-chain
         return ChatOpenAI(
@@ -192,6 +205,25 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
         #     "summary": "auto",  # 'detailed', 'auto', or None
         # },
     )
+
+
+def load_chat_model_with_fallback(
+    model: str,
+    configure: Callable[[BaseChatModel], Runnable] = lambda m: m,
+    callbacks: Callbacks = None,
+) -> Runnable:
+    """Load `model` and wrap it so a provider rate-limit (HTTP 429) transparently
+    retries on `settings.fallback_llm_model`.
+
+    `configure` applies the same setup (e.g. `bind_tools` or `with_structured_output`)
+    to both the primary and the fallback model, so the fallback is a drop-in replacement.
+    """
+    primary = configure(load_chat_model(model, callbacks))
+    fallback_model = settings.fallback_llm_model
+    if not fallback_model or fallback_model == model:
+        return primary
+    fallback = configure(load_chat_model(fallback_model, callbacks))
+    return primary.with_fallbacks([fallback], exceptions_to_handle=(RateLimitError,))
 
 
 # def get_msg_text(msg: BaseMessage) -> str:

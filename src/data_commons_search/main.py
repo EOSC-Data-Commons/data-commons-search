@@ -22,8 +22,8 @@ from ag_ui.core import (
 from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
-from langchain.chat_models import BaseChatModel
 from langchain.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.callbacks import Callbacks
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
@@ -44,7 +44,7 @@ from data_commons_search.db import (
     init_postgres_storage,
     store_messages,
 )
-from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW
+from data_commons_search.logging import BLUE, BOLD, RESET, YELLOW, setup_logging
 from data_commons_search.mcp_server import mcp
 from data_commons_search.models import (
     AgentInput,
@@ -66,12 +66,16 @@ from data_commons_search.rate_limit import RateLimiter
 from data_commons_search.utils import (
     file_logger,
     get_system_prompt,
-    load_chat_model,
+    load_chat_model_with_fallback,
     logger,
     sse,
 )
 
 # from data_commons_search.vault import router as vault_router
+
+# Configure logging in code (not via uvicorn --log-config) so the format is consistent
+# however the app is launched. JSON Lines in prod/staging (LOG_JSON=true) for ELK, rich otherwise.
+setup_logging(json_logs=settings.log_json, level=settings.log_level, debug=settings.debug_enabled)
 
 rate_limiter = RateLimiter()
 
@@ -290,6 +294,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
     """Stream the chat response with an agentic tool-calling loop."""
     run_id = str(uuid.uuid4())
     token_usage = TokenUsageMetadata()
+    t0 = time.monotonic()
 
     conv = ConversationBuilder(search_input, user)
     initial_items_count = len(conv.items)
@@ -312,8 +317,13 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
         ):
             langfuse_handler = LangfuseCallbackHandler()
             tools = await mcp_client.get_tools()
-            llm = load_chat_model(search_input.model, callbacks=[langfuse_handler])
-            llm_with_tools = llm.bind_tools(tools)
+            # Rate-limit (HTTP 429) on the primary provider transparently falls back to
+            # settings.fallback_llm_model. bind_tools is applied to both models.
+            llm_with_tools = load_chat_model_with_fallback(
+                search_input.model,
+                lambda m: m.bind_tools(tools),
+                callbacks=[langfuse_handler],
+            )
 
             lc_msgs: list[AnyMessage] = [get_system_prompt(TOOL_CALL_PROMPT), *conv.to_langchain()]
 
@@ -374,6 +384,10 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                         tool_call_id = str(tool_call.get("id") or f"call_{uuid.uuid4().hex}")
                         tool_call_name = str(tool_call["name"])
                         tool_call_args = dict(tool_call["args"])
+                        try:
+                            logger.info(f"Calling tool '{tool_call_name}' · \"{tool_call_args}\"", extra=tool_call_args)
+                        except Exception:
+                            logger.info(f"Calling tool '{tool_call_name}' (args not serializable)")
                         for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, tool_call_args, msg_id):
                             yield _chunk
 
@@ -413,12 +427,12 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                                 tool_call_name = "rerank_results"
                                 for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, {}, msg_id):
                                     yield _chunk
-                                ranked = await rerank_search_results(llm, lc_msgs, search_results, token_usage)
+                                ranked = await rerank_search_results(
+                                    search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
+                                )
                                 parsed = ranked.model_dump(by_alias=True)
                                 tool_results_str = json.dumps(parsed)
                                 rerank_summary = ranked.summary
-
-                                # logger.info(f"Reranked search results: {json.dumps(parsed, indent=2)}")
 
                         # To UI we send the full search results (30)
                         for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
@@ -430,6 +444,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                     # If rerank_summary already generated, then we dont need 1 more iteration with the LLM to generate the response,
                     # we can directly use the rerank_summary as the final response
                     if rerank_summary:
+                        final_text += rerank_summary
                         break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
@@ -449,7 +464,17 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
             if isinstance(item, MessageItem) and item.role == "user":
                 last_user_msg = "\n".join(part.text for part in item.content if part.type == "text")
                 break
-        logger.info(f'/chat "{last_user_msg}" | {token_usage.model_dump()}')
+        # logger.info(f'/chat "{last_user_msg}" | {time.monotonic() - t0:.2f}s | {token_usage.model_dump()}')
+        logger.info(
+            f'Completed query "{last_user_msg}" · {time.monotonic() - t0:.2f}s · {token_usage.model_dump()}',
+            extra={
+                "endpoint": "/chat",
+                # "query": last_user_msg,
+                "duration": time.monotonic() - t0,
+                "token_usage": token_usage.model_dump(),
+                "response": final_text,
+            },
+        )
         if final_text:
             file_logger.info(
                 json.dumps(
@@ -464,7 +489,8 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
 
 
 async def rerank_search_results(
-    llm: BaseChatModel,
+    model: str,
+    callbacks: Callbacks,
     chat_messages: list[AnyMessage],
     search_results: OpenSearchResults,
     token_usage: TokenUsageMetadata,
@@ -472,7 +498,8 @@ async def rerank_search_results(
     """Rerank search results using LLM with structured output.
 
     Args:
-        model: The LLM model to use for reranking
+        model: The LLM model (provider/name) to use for reranking
+        callbacks: LangChain callbacks (e.g. Langfuse) passed to the model
         chat_messages: Original chat messages for context
         search_results: Search results to rerank
 
@@ -508,8 +535,12 @@ async def rerank_search_results(
         HumanMessage(content=formatted_context),
     ]
     try:
-        # Call LLM with structured output for reranking.
-        llm_structured_rerank = llm.with_structured_output(RerankingOutput, method="json_schema", include_raw=True)
+        # Call LLM with structured output for reranking; rate-limit falls back to the fallback model.
+        llm_structured_rerank = load_chat_model_with_fallback(
+            model,
+            lambda m: m.with_structured_output(RerankingOutput, method="json_schema", include_raw=True),
+            callbacks=callbacks,
+        )
         resp = llm_structured_rerank.invoke(rerank_msgs)
         # logger.info(f"Reranking with context:\n{resp}")
         rerank_resp = RerankingOutputResponse.model_validate(resp)

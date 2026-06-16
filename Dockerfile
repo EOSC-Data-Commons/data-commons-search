@@ -8,8 +8,9 @@ RUN uv sync --frozen --extra agent
 
 ENV SERVER_PORT=8000
 ENV SERVER_HOST='0.0.0.0'
-ENV LOG_CONFIG=logging.yml
+# Emit JSON Lines logs for ELK ingestion (logging is configured in-app, see logging.py)
+ENV LOG_JSON='true'
 ENV PYTHONUNBUFFERED='1'
 ENV WORKERS=6
 EXPOSE 8000
-ENTRYPOINT ["sh", "-c", "uv run uvicorn src.data_commons_search.main:app --host $SERVER_HOST --port $SERVER_PORT --workers $WORKERS --log-config logging.yml"]
+ENTRYPOINT ["sh", "-c", "uv run uvicorn src.data_commons_search.main:app --host $SERVER_HOST --port $SERVER_PORT --workers $WORKERS"]

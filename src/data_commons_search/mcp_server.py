@@ -72,9 +72,18 @@ async def search_data(
         #     }
         # }
     ]
-    logger.info(
-        f"Search: `{search_input}` | start_date: {start_date} | end_date: {end_date} | creator_name: {creator_name}"
-    )
+    # logger.info(
+    #     f'Tool call `search_data`: "{search_input}"',
+    #     extra={
+    #         # "tool": "search_data",
+    #         # "args": {
+    #         "query": search_input,
+    #         "start_date": start_date,
+    #         "end_date": end_date,
+    #         "creator_name": creator_name,
+    #         # }
+    #     },
+    # )
 
     # Soft date handling: a requested range boosts in-range records instead of excluding out-of-range or
     # undated ones. dates.date is usually the publication date, not the data's temporal coverage, so a hard

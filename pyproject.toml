@@ -38,6 +38,7 @@ dependencies = [
     "opensearch-py >=3.2.0",
     "sqlalchemy >=2.0.50",
     "psycopg2-binary >=2.9.12",
+    "rich >=15.0.0",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +51,7 @@ agent = [
     "langchain-openai >=1.2.2",
     "langfuse >=4.6.1",
     # "langchain-litellm >=0.3.5",
-    # "langchain-mistralai >=1.0.1",
+    "langchain-mistralai >=1.1.5",
     # "langchain-huggingface", # This will install torch and many heavy nvidia dependencies
 ]
 # gpu = ["fastembed-gpu >=0.7.4"]
@@ -62,7 +63,6 @@ dev = [
     "pytest-cov >=7.0.0",
     "pre-commit >=4.5.1",
     "mcp[cli]",
-    "rich >=13.0.0",
 ]
 
 # # Required for onnxruntime-gpu on CUDA 12

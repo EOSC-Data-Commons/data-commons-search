@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Set to False for local HTTP dev (browsers drop Secure cookies over plain HTTP). Keep True in prod.
     cookie_secure: bool = True
     debug_enabled: bool = False
+    # Logging: human-readable rich output by default, JSON Lines for prod/staging (ELK ingestion).
+    log_json: bool = True
+    log_level: str = "INFO"
 
     filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
     tool_registry_api: str = "https://tool-registry.labs.dansdemo.nl/tools"
@@ -58,9 +61,13 @@ class Settings(BaseSettings):
     default_llm_model: str = "cesnet/qwen3-coder"
     # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
     # default_llm_model: str = "mistralai/mistral-medium-latest"
+    # Model used as a fallback when the primary provider rate-limits us (HTTP 429).
+    # Set to "" to disable the fallback.
+    fallback_llm_model: str = "mistralai/mistral-medium-latest"
     cesnet_api_key: str = ""
     fedllm_api_key: str = ""
     openrouter_api_key: str = ""
+    mistral_api_key: str = ""
     llm_max_tokens: int = 8192  # or 4096
     llm_seed: int = 42
 
