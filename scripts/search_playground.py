@@ -1,11 +1,11 @@
 """Quick relevance playground that calls the real `search_data` MCP tool.
 
 Usage:
-    uv run --env-file keys.env scripts/search_test.py "Data about CO2 levels in europe between 1960 and 2020" --start 1960-01-01 --end 2025-12-31
-    uv run --env-file keys.env scripts/search_test.py "CO2 levels Europe"
+    uv run --env-file keys.env scripts/search_playground.py "Data about CO2 levels in europe between 1960 and 2020" --start 1960-01-01 --end 2025-12-31
+    uv run --env-file keys.env scripts/search_playground.py "CO2 levels Europe"
 
 Point it at the right cluster by setting OPENSEARCH_URL (or opensearch_url in keys.env),
-e.g. OPENSEARCH_URL=http://localhost:9200 uv run python scripts/search_test.py "..."
+e.g. OPENSEARCH_URL=http://localhost:9200 uv run python scripts/search_playground.py "..."
 """
 
 from __future__ import annotations

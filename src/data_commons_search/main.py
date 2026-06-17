@@ -51,6 +51,7 @@ from data_commons_search.models import (
     AgentInput,
     ConversationDetail,
     ConversationSummary,
+    DbStats,
     LangChainResponseMetadata,
     MessageItem,
     RerankingOutput,
@@ -64,6 +65,7 @@ from data_commons_search.models import (
 )
 from data_commons_search.prompts import RERANK_PROMPT, TOOL_CALL_PROMPT
 from data_commons_search.rate_limit import RateLimiter
+from data_commons_search.stats import load_stats
 from data_commons_search.utils import (
     file_logger,
     get_system_prompt,
@@ -604,6 +606,19 @@ async def delete_conversations_endpoint(
 ) -> None:
     """Delete one or more conversations by their thread IDs. Only deletes conversations owned by the authenticated user."""
     delete_conversations(user.sub, thread_ids)
+
+
+@app.get("/stats")
+async def get_stats() -> DbStats:
+    """Return pre-computed stats about the harvested records in datasetdb.
+
+    Includes the dataset count per repository and the most popular subjects per repository.
+    Stats are generated offline by `POSTGRES_DB=datasetdb uv run scripts/compute_stats.py`
+    """
+    stats = load_stats()
+    if stats is None:
+        raise HTTPException(status_code=404, detail="Stats not available")
+    return stats
 
 
 @app.get("/", include_in_schema=False)

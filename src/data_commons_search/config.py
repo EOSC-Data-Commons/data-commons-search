@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "appdb"
 
+    # Number of top subjects to keep per repository in the /stats output
+    # (generated offline by scripts/compute_stats.py).
+    stats_top_subjects: int = 15
+
     # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     embedding_dimensions: int = 384  # 60MB

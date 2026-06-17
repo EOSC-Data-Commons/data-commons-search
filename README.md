@@ -261,22 +261,22 @@ uv build
 uv run pytest
 ```
 
-To display all logs for debugging:
-
-```sh
-uv run pytest -s
-```
-
-Run search benchmark:
+**Run benchmark** (check success of a set of search queries):
 
 ```sh
 uv run tests/benchmark.py
 ```
 
-Run tests for LLM jailbreak with [`garak`](https://github.com/NVIDIA/garak):
+**Run LLM jailbreak tests** with [`garak`](https://github.com/NVIDIA/garak):
 
 ```sh
 PYTHONPATH=tests/security uv run garak --config tests/security/garak.yaml
+```
+
+**Run stress tests** (20 concurrent uses) of the API:
+
+```sh
+uv run tests/stress_api.py -c 20
 ```
 
 ### 🧹 Format code and type check
@@ -297,6 +297,20 @@ Clean `uv` cache:
 
 ```sh
 uv cache clean
+```
+
+### 🔧 Maintenance
+
+Pre-compute stats for the datasets in the db to `src/data_commons_search/stats.json`:
+
+```sh
+POSTGRES_DB=datasetdb uv run scripts/compute_stats.py
+```
+
+Update dependencies in `pyproject.toml`:
+
+```sh
+uvx uv-bump
 ```
 
 ### 🏷️ Release process

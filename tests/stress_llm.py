@@ -6,11 +6,11 @@ and reports latency, time-to-first-token, throughput and failures. Each query is
 made unique with a nonce so the provider cache never serves a stored answer.
 
 Usage:
-    uv run --env-file keys.env scripts/llm_stress_test.py                 # 5 concurrent, 1 round
-    uv run --env-file keys.env scripts/llm_stress_test.py -c 20           # 20 concurrent
-    uv run --env-file keys.env scripts/llm_stress_test.py -c 10 -r 3      # 10 concurrent x 3 rounds
-    uv run --env-file keys.env scripts/llm_stress_test.py --ramp 5,10,20  # escalate to find the limit
-    uv run --env-file keys.env scripts/llm_stress_test.py -m openrouter/qwen/qwen3-coder-flash
+    uv run --env-file keys.env tests/stress_llm.py                 # 5 concurrent, 1 round
+    uv run --env-file keys.env tests/stress_llm.py -c 20           # 20 concurrent
+    uv run --env-file keys.env tests/stress_llm.py -c 10 -r 3      # 10 concurrent x 3 rounds
+    uv run --env-file keys.env tests/stress_llm.py --ramp 5,10,20  # escalate to find the limit
+    uv run --env-file keys.env tests/stress_llm.py -m openrouter/qwen/qwen3-coder-flash
 """
 
 from __future__ import annotations
