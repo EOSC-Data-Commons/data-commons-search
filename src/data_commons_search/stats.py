@@ -14,6 +14,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
+from data_commons_search import __version__
 from data_commons_search.config import settings
 from data_commons_search.models import DbStats, RepositoryStats, SubjectCount
 from data_commons_search.utils import logger
@@ -100,8 +101,8 @@ def compute_stats() -> DbStats:
         )
         for row in repo_rows
     ]
-
     return DbStats(
+        api_version=__version__,
         generated_at=datetime.now(timezone.utc),
         total_records=sum(r.record_count for r in repositories),
         total_datasets=sum(r.datasets for r in repositories),
@@ -121,7 +122,9 @@ def load_stats(path: Path = STATS_FILE) -> DbStats | None:
         logger.warning(f"Stats file not found at {path}; run scripts/compute_stats.py to generate it")
         return None
     try:
-        return DbStats.model_validate_json(path.read_text())
+        stats = DbStats.model_validate_json(path.read_text())
     except Exception as exc:
         logger.error(f"Failed to load stats from {path}: {exc}")
         return None
+    stats.api_version = __version__
+    return stats

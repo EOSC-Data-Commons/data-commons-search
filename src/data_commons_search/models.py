@@ -271,6 +271,8 @@ class RepositoryStats(BaseModel):
 class DbStats(BaseModel):
     """Aggregated stats over the datasetdb records, per repository."""
 
+    api_version: str = ""
+    """Version of the running data-commons-search API (set at response time, not compute time)."""
     generated_at: datetime
     total_records: int
     total_datasets: int
