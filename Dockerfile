@@ -13,8 +13,8 @@ ENV LOG_JSON='true'
 ENV PYTHONUNBUFFERED='1'
 ENV WORKERS=6
 
-# For proper resolution in prod at https://matchmaker.eosc-data-commons.eu/api/search/docs
-ENV ROOT_PATH=/api/search
+# # For proper resolution in prod at https://matchmaker.eosc-data-commons.eu/api/search/docs
+# ENV ROOT_PATH=/api/search
 
 EXPOSE 8000
 ENTRYPOINT ["sh", "-c", "uv run uvicorn src.data_commons_search.main:app --host $SERVER_HOST --port $SERVER_PORT --workers $WORKERS"]
