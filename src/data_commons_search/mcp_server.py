@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import json
 import time
 from typing import Any
@@ -56,8 +57,8 @@ async def search_data(
         Results from OpenSearch (total_found, hits[])
     """
 
-    # Generate embedding for the query
-    embedding = next(iter(embedding_model.embed([search_input])))
+    # Generate embedding for the query (blocking CPU work -> offload to a thread)
+    embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
     # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
 
     # Define filters
@@ -207,13 +208,16 @@ async def search_data(
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
     t_search_start = time.perf_counter()
     try:
-        resp = opensearch_client.search(
-            index=settings.opensearch_index,
-            body=body,
-            # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies, so
-            # near-tied results don't flip between identical queries (primary/replica IDF divergence).
-            search_type="dfs_query_then_fetch",
-            preference="data-commons-search",
+        # Run the blocking OpenSearch call in a thread so it doesn't freeze the event loop
+        resp = await asyncio.to_thread(
+            lambda: opensearch_client.search(
+                index=settings.opensearch_index,
+                body=body,
+                # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies,
+                # so near-tied results don't flip between identical queries (primary/replica IDF divergence)
+                search_type="dfs_query_then_fetch",
+                preference="data-commons-search",
+            )
         )
     except Exception as e:
         logger.error(f"OpenSearch query failed: {e}")

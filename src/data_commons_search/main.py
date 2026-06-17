@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ag_ui.core import (
+    RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
     TextMessageChunkEvent,
@@ -448,6 +449,10 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                         break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
+    except Exception as exc:
+        logger.exception("Chat stream failed", extra={"endpoint": "/chat", "run_id": run_id})
+        with contextlib.suppress(Exception):
+            yield sse(RunErrorEvent(message=str(exc) or exc.__class__.__name__, timestamp=get_timestamp()))
     finally:
         if user is not None:
             new_items_start = max(0, initial_items_count - 1)
@@ -543,7 +548,7 @@ async def rerank_search_results(
             lambda m: m.with_structured_output(RerankingOutput, method="json_schema", include_raw=True),
             callbacks=callbacks,
         )
-        resp = llm_structured_rerank.invoke(rerank_msgs)
+        resp = await llm_structured_rerank.ainvoke(rerank_msgs)
         # logger.info(f"Reranking with context:\n{resp}")
         rerank_resp = RerankingOutputResponse.model_validate(resp)
         token_usage += LangChainResponseMetadata.model_validate(rerank_resp.raw.response_metadata).token_usage
