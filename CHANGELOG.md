@@ -1,5 +1,24 @@
 # 🪵 Changelog
 
+## [0.7.6](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.5..v0.7.6) - 2026-06-17
+
+### ⛰️ Features
+
+- Add fallback to mistral AI provider when we hit rate limits on cesnet, improve logging, use JSON logger in prod for future log stack - ([604effb](https://github.com/EOSC-Data-Commons/data-commons-search/commit/604effb98e146ad3ed51eb2b2899a26b78bade97))
+- Implement the `search_tools` MCP tool, search for tools using the tool registry API - ([e7f2d68](https://github.com/EOSC-Data-Commons/data-commons-search/commit/e7f2d686b99a35c014fb9a3a633428c85963020f))
+
+### 🐛 Bug Fixes
+
+- Improve error handling in /auth endpoint, update benchmark set, improve search_test.py script, add stress test scripts - ([f03a716](https://github.com/EOSC-Data-Commons/data-commons-search/commit/f03a71614b5ce260d3fb648870419cebc04e593b))
+
+### 🚜 Refactor
+
+- Improve logging - ([0525522](https://github.com/EOSC-Data-Commons/data-commons-search/commit/052552295b281a703df6ea0542c68f2e3ab26930))
+
+### 🧪 Testing
+
+- Add LLM vulnerability tests with `garak` (jailbreak, prompt injections, etc) - ([46dcbae](https://github.com/EOSC-Data-Commons/data-commons-search/commit/46dcbae3e16c762922c772f1f07daba1e0ad91f8))
+
 ## [0.7.5](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.4..v0.7.5) - 2026-06-15
 
 ### ⛰️ Features
