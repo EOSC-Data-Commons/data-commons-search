@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     # Server settings
     server_port: int = 8000
     server_host: str = "0.0.0.0"  # noqa: S104
+    # Mount prefix when served behind a reverse proxy (e.g. "/api/search")
+    root_path: str = ""
     cors_enabled: bool = True
     rate_limiting_enabled: bool = True
     # Set to False for local HTTP dev (browsers drop Secure cookies over plain HTTP). Keep True in prod.
