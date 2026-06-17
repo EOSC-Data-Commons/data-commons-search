@@ -15,7 +15,7 @@ The HTTP API comprises 2 main endpoints:
   - Available tools:
     - [x] Search datasets
     - [x] Get metadata for the files in a dataset (name, description, type of files)
-    - [ ] Search tools
+    - [x] Search tools
     - [ ] Search citations related to datasets or tools
 - `/chat`: **HTTP POST** endpoint (JSON) for chatting with the MCP server tools via an LLM provider (API key provided through env variable at deployment)
   - Streams Server-Sent Events (SSE) response complying with the [AG-UI protocol](https://ag-ui.com).

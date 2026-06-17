@@ -26,7 +26,7 @@ from rich.table import Table
 from rich.text import Text
 
 from data_commons_search.config import settings
-from data_commons_search.models import RankedSearchResponse
+from data_commons_search.models import SummarizedSearchResponse
 
 console = Console()
 
@@ -205,7 +205,7 @@ def run_search(test_item: TestItem, condition: Condition) -> tuple[list[str], fl
     found_ids: list[str] = []
     for event in events:
         if event.get("type") == "TOOL_CALL_RESULT" and event.get("tool_call_id") == "rerank_results":
-            ranked = RankedSearchResponse.model_validate_json(event["content"])
+            ranked = SummarizedSearchResponse.model_validate_json(event["content"])
             found_ids = [hit.id for hit in ranked.hits]
             break
     return found_ids, elapsed

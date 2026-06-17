@@ -52,10 +52,10 @@ from data_commons_search.models import (
     ConversationSummary,
     LangChainResponseMetadata,
     MessageItem,
-    OpenSearchResults,
-    RankedSearchResponse,
     RerankingOutput,
     RerankingOutputResponse,
+    SearchResults,
+    SummarizedSearchResponse,
     TextPart,
     TokenUsageMetadata,
     ToolCallItem,
@@ -124,6 +124,7 @@ langfuse = Langfuse(
 logger.info(f"""🔭 {BOLD}{BLUE}EOSC Data Commons Search API{RESET} · {BOLD}{settings.server_url}{RESET}
 ⚡️ Streamable HTTP MCP server · {settings.server_url}/mcp
 🔓 Login · {settings.server_url}/auth/login
+🐘 PostgreSQL · {BOLD}{settings.postgres_host}{RESET}
 🔎 OpenSearch · {BOLD}{settings.opensearch_url}{RESET}""")
 
 
@@ -419,7 +420,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                         # If the first tool call returned search results, rerank them with the LLM
                         if parsed is not None:
                             try:
-                                search_results = OpenSearchResults.model_validate(parsed)
+                                search_results = SearchResults.model_validate(parsed)
                             except Exception:
                                 search_results = None
                             if search_results is not None and search_results.hits:
@@ -494,9 +495,9 @@ async def rerank_search_results(
     model: str,
     callbacks: Callbacks,
     chat_messages: list[AnyMessage],
-    search_results: OpenSearchResults,
+    search_results: SearchResults,
     token_usage: TokenUsageMetadata,
-) -> RankedSearchResponse:
+) -> SummarizedSearchResponse:
     """Rerank search results using LLM with structured output.
 
     Args:
@@ -506,7 +507,7 @@ async def rerank_search_results(
         search_results: Search results to rerank
 
     Returns:
-        RankedSearchResponse with reranked hits and summary
+        SummarizedSearchResponse with reranked hits and summary
     """
     # Format the context for the LLM
     last_msg = chat_messages[-1] if chat_messages else None
@@ -563,11 +564,11 @@ async def rerank_search_results(
         # Sort hits by score in descending order
         reranked_hits.sort(key=lambda h: h.score if h.score is not None else 0.0, reverse=True)
         # await get_relevant_tools(reranked_hits)
-        return RankedSearchResponse(summary=rerank_resp.parsed.summary, hits=reranked_hits)
+        return SummarizedSearchResponse(summary=rerank_resp.parsed.summary, hits=reranked_hits)
     except Exception as e:
         logger.error(f"Reranking failed: {e}")
         # Fallback: return results as-is without reranking
-        return RankedSearchResponse(
+        return SummarizedSearchResponse(
             summary=f"Found {search_results.total_found} relevant datasets.",
             hits=search_results.hits,
         )

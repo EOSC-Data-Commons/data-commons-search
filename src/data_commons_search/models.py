@@ -231,18 +231,14 @@ class SearchHit(BaseModel):
         )
 
 
-class OpenSearchResults(BaseModel):
+class SearchResults(BaseModel):
     """Search results from OpenSearch."""
 
     total_found: int
     hits: list[SearchHit]
 
 
-# Final ranked search response model
-
-
-# TODO: remove, not used anymore
-class RankedSearchResponse(BaseModel):
+class SummarizedSearchResponse(BaseModel):
     """Final response containing ranked search results and summary."""
 
     summary: str

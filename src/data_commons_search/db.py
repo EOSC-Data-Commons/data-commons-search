@@ -267,15 +267,3 @@ def delete_conversations(user_sub: str, thread_ids: list[str]) -> None:
             stmt = stmt.where(Conversation.thread_id.in_(thread_ids))
         db.execute(stmt)
         db.commit()
-
-
-# def generate_unique_thread_id(user_sub: str) -> str:
-#     """Generate a thread ID that does not yet exist for the given user."""
-#     while True:
-#         thread_id = str(uuid.uuid4())
-#         with SessionLocal() as db:
-#             exists = db.execute(
-#                 select(Conversation).where(Conversation.user_id == user_sub, Conversation.thread_id == thread_id)
-#             ).scalar_one_or_none()
-#         if exists is None:
-#             return thread_id

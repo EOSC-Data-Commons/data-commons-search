@@ -12,8 +12,8 @@ from opensearchpy import OpenSearch
 from data_commons_search.config import settings
 from data_commons_search.models import (
     FileMetrixFilesResponse,
-    OpenSearchResults,
     SearchHit,
+    SearchResults,
 )
 from data_commons_search.utils import logger
 
@@ -43,7 +43,7 @@ RERANK_TOP_K = 30
 @mcp.tool()
 async def search_data(
     search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
-) -> OpenSearchResults:
+) -> SearchResults:
     """Search for datasets relevant to the user question.
 
     Args:
@@ -217,7 +217,7 @@ async def search_data(
         )
     except Exception as e:
         logger.error(f"OpenSearch query failed: {e}")
-        return OpenSearchResults(total_found=0, hits=[])
+        return SearchResults(total_found=0, hits=[])
     t_search_elapsed = time.perf_counter() - t_search_start
     # Extract hits from OpenSearch response
     raw_hits = resp.get("hits", {}).get("hits", [])
@@ -233,7 +233,7 @@ async def search_data(
         raw_hits = sorted(raw_hits, key=lambda h: h.get("_score") or 0.0, reverse=True)
     # Trim the large candidate pool down to the number of results we actually return.
     raw_hits = raw_hits[: settings.search_results_count]
-    res = OpenSearchResults(
+    res = SearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in raw_hits],
     )
@@ -307,8 +307,17 @@ async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
     return FileMetrixFilesResponse(files=[])
 
 
+def _formats_to_list(value: Any) -> list[str]:
+    """Normalize a file-format column (array / jsonb / text) into a flat list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value if v]
+    return [str(value)]
+
+
 @mcp.tool()
-async def search_tools(search_input: str) -> OpenSearchResults:
+async def search_tools(search_input: str) -> SearchResults:
     """Search for tools relevant to the user question
 
     Args:
@@ -317,25 +326,48 @@ async def search_tools(search_input: str) -> OpenSearchResults:
     Returns:
         Search results with a list of tools and services relevant to the question
     """
-    search_results = {
-        "total_found": 1,
-        "hits": [
-            {
-                "_id": "https://jupyter.org/",
-                "_score": 0.8,
-                "_source": {
-                    "titles": [{"title": "JupyterLab", "lang": "en"}],
-                    "descriptions": [{"description": "Notebooks", "lang": "en"}],
-                    "url": "https://jupyter.org/",
-                    "doi": None,
-                    "dates": [{"date": "2016-08-29", "dateType": "Issued"}],
-                    "publicationYear": "2016",
-                    "creators": [{"creatorName": "Lastname, Firstname"}],
-                },
-            }
-        ],
-    }
-    return OpenSearchResults.model_validate(search_results)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{settings.tool_registry_api}/",
+                params={"description": search_input},
+                headers={"accept": "application/json"},
+            )
+            resp.raise_for_status()
+            rows = resp.json()
+    except Exception as e:
+        logger.error(f"search_tools registry query failed: {e}")
+        return SearchResults(total_found=0, hits=[])
+
+    rows = rows[: settings.search_results_count]
+    total = len(rows)
+    hits: list[SearchHit] = []
+    for rank, row in enumerate(rows):
+        name = row.get("name")
+        description = row.get("description")
+        file_extensions = sorted(
+            set(_formats_to_list(row.get("input_file_formats")) + _formats_to_list(row.get("output_file_formats")))
+        )
+        url = row.get("uri") or row.get("location")
+        hits.append(
+            SearchHit.model_validate(
+                {
+                    "_id": url or str(row.get("id")),
+                    # The registry returns results already ordered by relevance but without a score, so
+                    # derive a descending score from the rank to preserve ordering downstream.
+                    "_score": float(total - rank),
+                    "_source": {
+                        "url": url,
+                        "titles": [{"title": name}] if name else [],
+                        "descriptions": [{"description": description}] if description else [],
+                        "resourceType": "tool",
+                    },
+                    "fileExtensions": file_extensions,
+                }
+            )
+        )
+    logger.debug(f"search_tools: {total} tools matched for {search_input!r}")
+    return SearchResults(total_found=total, hits=hits)
 
 
 # @mcp.tool()

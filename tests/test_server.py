@@ -6,7 +6,7 @@ import pytest
 from ag_ui.core import RunStartedEvent
 
 from data_commons_search.config import settings
-from data_commons_search.models import RankedSearchResponse
+from data_commons_search.models import SummarizedSearchResponse
 from tests.benchmark import TestItem, test_items
 
 # When running the tests, ensure the server is running on port 8000
@@ -76,7 +76,7 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
 
             if rerank_event is not None:
                 # Model went through the full search → rerank pipeline
-                ranked_response = RankedSearchResponse.model_validate_json(rerank_event["content"])
+                ranked_response = SummarizedSearchResponse.model_validate_json(rerank_event["content"])
                 assert len(ranked_response.hits) > 0, "Rerank returned no hits"
                 for hit in ranked_response.hits:
                     assert hit.id, "Every ranked hit must have a non-empty id"
@@ -128,7 +128,7 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
 #             }
 #         )
 #     ]
-#     # search_res = RankedSearchResponse.model_validate(dummy_search_res)
+#     # search_res = SummarizedSearchResponse.model_validate(dummy_search_res)
 #     await get_relevant_tools(dummy_search_hits)
 #     print(dummy_search_hits)
 #     assert len(dummy_search_hits) >= 1
