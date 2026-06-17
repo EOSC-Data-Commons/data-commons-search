@@ -1,5 +1,15 @@
 # 🪵 Changelog
 
+## [0.7.8](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.7..v0.7.8) - 2026-06-17
+
+### ⛰️ Features
+
+- Add API version to /stats - ([6c00df6](https://github.com/EOSC-Data-Commons/data-commons-search/commit/6c00df6ec6ea0d290c9d783f60dbf8bc846ad82e))
+
+### 🐛 Bug Fixes
+
+- Revert root_path as it breaks in staging - ([556bd00](https://github.com/EOSC-Data-Commons/data-commons-search/commit/556bd008848c6695cf6e81fdb211820ae8ddc3f8))
+
 ## [0.7.7](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.6..v0.7.7) - 2026-06-17
 
 ### ⛰️ Features
