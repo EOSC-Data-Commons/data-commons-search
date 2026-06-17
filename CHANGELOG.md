@@ -1,5 +1,17 @@
 # 🪵 Changelog
 
+## [0.7.7](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.6..v0.7.7) - 2026-06-17
+
+### ⛰️ Features
+
+- Fix secret store vault - ([5977b8f](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5977b8fb8e1c9043ee5dba36292a1329f188cdb2))
+- Add /stats endpoint with per-repository dataset and subject counts - ([b2ae1a6](https://github.com/EOSC-Data-Commons/data-commons-search/commit/b2ae1a6ffa649a1cddb96e67ee417d54abcc85b3))
+
+### 🐛 Bug Fixes
+
+- Fix `RemoteProtocolError` issue when running concurrent requests - ([553ce0c](https://github.com/EOSC-Data-Commons/data-commons-search/commit/553ce0ca6ee672f27d0e5f89b08e2e67052d9725))
+- Set FastAPI root_path so /docs and /openapi.json work behind proxy - ([e5f0e16](https://github.com/EOSC-Data-Commons/data-commons-search/commit/e5f0e16ab0e04b049eb46ba3d664306084d96cb1))
+
 ## [0.7.6](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.5..v0.7.6) - 2026-06-17
 
 ### ⛰️ Features
