@@ -191,6 +191,23 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 >
 > Recommended model: `cesnet/qwen3-coder`
 
+### 🔐 Secrets Store
+
+[EGI Secret Store](https://docs.egi.eu/users/security/secrets-store/), get the token from [aai.egi.eu/token](https://aai.egi.eu/token) (decode the JWT to get the actual access token)
+
+```sh
+export BASE="https://matchmaker.eosc-data-commons.eu"
+curl -s "$BASE/auth/user" --cookie "access_token=$TOKEN"
+
+curl -s -X PUT "$BASE/auth/keys/vip" --cookie "access_token=$TOKEN" \
+  -H "Content-Type: application/json" -d '{"key_value":"sk-123"}'
+
+curl -s "$BASE/auth/keys" --cookie "access_token=$TOKEN"
+curl -s "$BASE/auth/keys/all" --cookie "access_token=$TOKEN"
+curl -s "$BASE/auth/keys/vip" --cookie "access_token=$TOKEN"
+curl -s -X DELETE "$BASE/auth/keys/openai" --cookie "access_token=$TOKEN"
+```
+
 ### 🐳 Deploy with Docker
 
 Create a `keys.env` file with the API keys (see above for complete example):

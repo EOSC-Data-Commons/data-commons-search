@@ -321,10 +321,10 @@ async def search_tools(search_input: str) -> SearchResults:
     """Search for tools relevant to the user question
 
     Args:
-        search_input: Natural language search input
+        search_input: search terms
 
     Returns:
-        Search results with a list of tools and services relevant to the question
+        Search results with a list of tools relevant to the question
     """
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:

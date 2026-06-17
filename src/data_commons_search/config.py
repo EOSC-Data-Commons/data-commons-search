@@ -99,12 +99,13 @@ class Settings(BaseSettings):
     vault_url: str = "https://secrets.egi.eu"
     # JWT/OIDC auth mount path (e.g. "jwt" or "oidc")
     vault_jwt_mount: str = "jwt"
-    # Role name configured in the Vault JWT auth method
-    vault_jwt_role: str = "default"
+    # Role name for the Vault JWT auth method. EGI's mount has a default_role configured and
+    # rejects an explicit role ("role ... could not be found"), so leave empty to omit it.
+    vault_jwt_role: str = ""
     # KV secrets engine mount path
     vault_kv_mount: str = "secrets"
-    # KV engine version (1 or 2)
-    vault_kv_version: int = 2
+    # KV engine version (1 or 2). EGI Secret Store's "secrets/" mount is KV v1.
+    vault_kv_version: int = 1
 
     model_config = SettingsConfigDict(
         env_file="keys.env",

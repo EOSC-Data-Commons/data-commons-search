@@ -70,8 +70,7 @@ from data_commons_search.utils import (
     logger,
     sse,
 )
-
-# from data_commons_search.vault import router as vault_router
+from data_commons_search.vault import router as vault_router
 
 # Configure logging in code (not via uvicorn --log-config) so the format is consistent
 # however the app is launched. JSON Lines in prod/staging (LOG_JSON=true) for ELK, rich otherwise.
@@ -609,8 +608,7 @@ async def root_redirect() -> RedirectResponse:
 
 
 app.include_router(auth_router)
-# TODO: need to use prod auth server
-# app.include_router(vault_router)
+app.include_router(vault_router)
 
 
 # # NOTE: deprecated -Serve website built using vite

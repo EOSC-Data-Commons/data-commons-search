@@ -1,7 +1,8 @@
 """EGI Secret Store (HashiCorp Vault) client for per-user API key management.
 
 Users authenticate to the Vault via their EGI Check-in access token (JWT auth).
-Secrets are stored at: {kv_mount}/[data/]{user_sub}/api-keys/{key_id}
+Secrets are stored at: {kv_mount}/users/{voperson_id}/api-keys/{key_id}
+(EGI's "secrets/" mount is KV v1; the per-user policy is scoped by voperson_id.)
 """
 
 from urllib.parse import quote
@@ -28,47 +29,50 @@ class VaultError(Exception):
 async def get_vault_token(egi_access_token: str) -> str:
     """Exchange an EGI Check-in access token for a Vault client token via JWT auth."""
     url = f"{settings.vault_url}/v1/auth/{settings.vault_jwt_mount}/login"
+    body: dict[str, str] = {"jwt": egi_access_token}
+    # EGI's JWT mount has a default_role; only send an explicit role when configured.
+    if settings.vault_jwt_role:
+        body["role"] = settings.vault_jwt_role
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json={"jwt": egi_access_token, "role": settings.vault_jwt_role})
+        resp = await client.post(url, json=body)
         if resp.status_code != 200:
             logger.warning(f"Vault JWT auth failed ({resp.status_code}): {resp.text}")
             raise VaultError(f"Vault authentication failed: {resp.status_code}")
         return resp.json()["auth"]["client_token"]
 
 
-def _secret_path(user_sub: str, key_id: str | None = None) -> str:
-    """Build the Vault REST path for a user's API key secret.
+def _secret_path(user_id: str, key_id: str | None = None) -> str:
+    """Build the Vault REST path for a user's API key secret (KV v1, no /data/ prefix).
 
-    KV v2 uses /data/ for read/write and /metadata/ for list/delete.
-    KV v1 uses the path directly.
+    KV v2 uses /data/ for read/write and /metadata/ for list/delete; KV v1 uses the path
+    directly. The user's space lives under users/{voperson_id}.
     """
-    sub_enc = quote(user_sub, safe="")
-    base = f"{settings.vault_kv_mount}/{sub_enc}/api-keys"
+    id_enc = quote(user_id, safe="")
+    base = f"{settings.vault_kv_mount}/users/{id_enc}/api-keys"
     if key_id:
         base = f"{base}/{quote(key_id, safe='')}"
     return base
 
 
-def _kv_data_path(user_sub: str, key_id: str) -> str:
+def _kv_data_path(user_id: str, key_id: str) -> str:
     if settings.vault_kv_version == 2:
-        sub_enc = quote(user_sub, safe="")
-        return f"{settings.vault_kv_mount}/data/{sub_enc}/api-keys/{quote(key_id, safe='')}"
-    return _secret_path(user_sub, key_id)
+        id_enc = quote(user_id, safe="")
+        return f"{settings.vault_kv_mount}/data/users/{id_enc}/api-keys/{quote(key_id, safe='')}"
+    return _secret_path(user_id, key_id)
 
 
-def _kv_list_path(user_sub: str) -> str:
+def _kv_list_path(user_id: str) -> str:
     if settings.vault_kv_version == 2:
-        sub_enc = quote(user_sub, safe="")
-        return f"{settings.vault_kv_mount}/metadata/{sub_enc}/api-keys"
-    sub_enc = quote(user_sub, safe="")
-    return f"{settings.vault_kv_mount}/{sub_enc}/api-keys"
+        id_enc = quote(user_id, safe="")
+        return f"{settings.vault_kv_mount}/metadata/users/{id_enc}/api-keys"
+    return _secret_path(user_id)
 
 
-def _kv_delete_path(user_sub: str, key_id: str) -> str:
+def _kv_delete_path(user_id: str, key_id: str) -> str:
     if settings.vault_kv_version == 2:
-        sub_enc = quote(user_sub, safe="")
-        return f"{settings.vault_kv_mount}/metadata/{sub_enc}/api-keys/{quote(key_id, safe='')}"
-    return _secret_path(user_sub, key_id)
+        id_enc = quote(user_id, safe="")
+        return f"{settings.vault_kv_mount}/metadata/users/{id_enc}/api-keys/{quote(key_id, safe='')}"
+    return _secret_path(user_id, key_id)
 
 
 async def vault_save_api_key(egi_access_token: str, user_sub: str, key_id: str, key_value: str) -> None:
@@ -156,6 +160,11 @@ async def vault_delete_api_key(egi_access_token: str, user_sub: str, key_id: str
 # ── FastAPI dependency ─────────────────────────────────────────────────────────
 
 
+def _vault_user_id(user: UserInfo) -> str:
+    """EGI Secret Store scopes each user's space by voperson_id; fall back to sub if absent."""
+    return getattr(user, "voperson_id", None) or user.sub
+
+
 async def require_vault_auth(
     request: Request,
     user: UserInfo = Depends(require_auth),
@@ -207,7 +216,7 @@ async def put_api_key(
 ) -> dict[str, str]:
     user, access_token = auth
     try:
-        await vault_save_api_key(access_token, user.sub, key_id, body.key_value)
+        await vault_save_api_key(access_token, _vault_user_id(user), key_id, body.key_value)
     except VaultError as exc:
         raise _vault_http_error(exc) from exc
     return {"status": "saved", "key_id": key_id}
@@ -219,7 +228,7 @@ async def list_api_keys(
 ) -> ApiKeyListOut:
     user, access_token = auth
     try:
-        key_ids = await vault_list_api_key_ids(access_token, user.sub)
+        key_ids = await vault_list_api_key_ids(access_token, _vault_user_id(user))
     except VaultError as exc:
         raise _vault_http_error(exc) from exc
     return ApiKeyListOut(key_ids=key_ids)
@@ -231,7 +240,7 @@ async def get_all_api_keys(
 ) -> ApiKeysOut:
     user, access_token = auth
     try:
-        keys = await vault_get_api_keys(access_token, user.sub)
+        keys = await vault_get_api_keys(access_token, _vault_user_id(user))
     except VaultError as exc:
         raise _vault_http_error(exc) from exc
     return ApiKeysOut(keys=keys)
@@ -244,7 +253,7 @@ async def get_api_key(
 ) -> ApiKeyOut:
     user, access_token = auth
     try:
-        value = await vault_get_api_key(access_token, user.sub, key_id)
+        value = await vault_get_api_key(access_token, _vault_user_id(user), key_id)
     except VaultError as exc:
         raise _vault_http_error(exc) from exc
     if value is None:
@@ -259,7 +268,7 @@ async def delete_api_key(
 ) -> dict[str, str]:
     user, access_token = auth
     try:
-        await vault_delete_api_key(access_token, user.sub, key_id)
+        await vault_delete_api_key(access_token, _vault_user_id(user), key_id)
     except VaultError as exc:
         raise _vault_http_error(exc) from exc
     return {"status": "deleted", "key_id": key_id}
