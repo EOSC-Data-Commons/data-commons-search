@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import secrets
+import time
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
@@ -12,6 +13,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import RedirectResponse
 from fastapi.security import OpenIdConnect
+from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from data_commons_search.config import settings
 from data_commons_search.db import ensure_user_exists
@@ -99,6 +101,64 @@ async def _fetch_userinfo(access_token: str) -> tuple[UserInfo | None, int | Non
         if resp.status_code == 200:
             return UserInfo(**resp.json()), resp.status_code
         return None, resp.status_code
+
+
+def oidc_issuer_url() -> str:
+    """Best-effort OIDC issuer URL derived from the configured discovery URL.
+
+    Used to advertise the authorization server in the MCP Protected Resource Metadata.
+    """
+    return settings.oidc_config_url.split("/.well-known/")[0]
+
+
+class EgiAccessToken(AccessToken):
+    """Validated bearer token enriched with the resolved OIDC user identity.
+
+    The SDK never renders these extra fields back to clients, so it is safe to carry the full
+    `UserInfo` alongside the standard `AccessToken` fields. Tools recover it via `get_access_token()`
+    """
+
+    userinfo: UserInfo | None = None
+
+
+class EgiTokenVerifier(TokenVerifier):
+    """Verify EGI Check-in bearer tokens via the OIDC userinfo endpoint (RFC 9728 resource server).
+
+    This is the standard MCP server-side `TokenVerifier` hook. Validating against userinfo
+    works for both opaque and JWT access tokens. Successful validations are cached briefly so a
+    burst of MCP calls from one client does not hammer the identity provider. Any failure
+    (invalid/expired token, IdP unreachable) resolves to `None` -> the request is treated as
+    anonymous, keeping the public MCP tools available.
+    """
+
+    def __init__(self, ttl: int = 300) -> None:
+        self._ttl = ttl
+        self._cache: dict[str, tuple[float, EgiAccessToken]] = {}
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        now = time.monotonic()
+        cached = self._cache.get(token)
+        if cached and cached[0] > now:
+            return cached[1]
+        try:
+            user, status = await _fetch_userinfo(token)
+        except Exception as exc:  # IdP unreachable / network error -> treat as anonymous
+            logger.warning(f"MCP token verification failed: {type(exc).__name__}: {exc}")
+            return None
+        if user is None:
+            logger.debug(f"MCP token rejected by userinfo endpoint (status {status})")
+            return None
+        access = EgiAccessToken(
+            token=token,
+            client_id=user.sub,
+            scopes=[],
+            expires_at=None,
+            userinfo=user,
+        )
+        # Drop expired entries opportunistically to keep the cache bounded.
+        self._cache = {t: v for t, v in self._cache.items() if v[0] > now}
+        self._cache[token] = (now + self._ttl, access)
+        return access
 
 
 async def _refresh_access_token(refresh_token: str) -> dict[str, Any] | None:

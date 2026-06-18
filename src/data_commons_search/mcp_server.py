@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import httpx
 from fastembed import TextEmbedding
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
 
@@ -15,6 +16,7 @@ from data_commons_search.models import (
     FileMetrixFilesResponse,
     SearchHit,
     SearchResults,
+    UserInfo,
 )
 from data_commons_search.utils import logger
 
@@ -38,6 +40,16 @@ opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
 RERANK_TOP_K = 30
 
 
+def _log_mcp_user() -> UserInfo | None:
+    """Return the authenticated MCP caller for a tool, if the request carried a valid bearer token.
+
+    Returns the resolved ``UserInfo`` when authenticated (None otherwise) so tools can later tailor
+    behaviour (e.g. user preferences). For now identity is purely informational.
+    """
+    token = get_access_token()
+    return getattr(token, "userinfo", None) if token else None
+
+
 # https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
 
 
@@ -56,6 +68,9 @@ async def search_data(
     Returns:
         Results from OpenSearch (total_found, hits[])
     """
+    user = _log_mcp_user()
+    if user:
+        logger.info(f"Tool call `search_data` by user '{user.preferred_username or user.sub}'")
 
     # Generate embedding for the query (blocking CPU work -> offload to a thread)
     embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
@@ -300,6 +315,7 @@ async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
     Returns:
         Search results with a single dataset matching the DOI
     """
+    # _log_mcp_user()
     # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(
@@ -330,6 +346,7 @@ async def search_tools(search_input: str) -> SearchResults:
     Returns:
         Search results with a list of tools relevant to the question
     """
+    # _log_mcp_user()
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(

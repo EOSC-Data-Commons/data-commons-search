@@ -205,7 +205,7 @@ curl -s -X PUT "$BASE/auth/keys/vip" --cookie "access_token=$TOKEN" \
 curl -s "$BASE/auth/keys" --cookie "access_token=$TOKEN"
 curl -s "$BASE/auth/keys/all" --cookie "access_token=$TOKEN"
 curl -s "$BASE/auth/keys/vip" --cookie "access_token=$TOKEN"
-curl -s -X DELETE "$BASE/auth/keys/openai" --cookie "access_token=$TOKEN"
+curl -s -X DELETE "$BASE/auth/keys/vip" --cookie "access_token=$TOKEN"
 ```
 
 ### 🐳 Deploy with Docker

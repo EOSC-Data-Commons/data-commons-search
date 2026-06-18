@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     # Hosts allowed as post-login redirect targets for external systems using /auth/login?redirect=...
     # Entries starting with "." match the host and any subdomain (e.g. ".eosc-data-commons.eu").
     allowed_redirect_hosts: list[str] = [".eosc-data-commons.eu"]
+    # Public base URL used as the MCP resource identifier in the OAuth Protected Resource Metadata
+    # (RFC 9728). Falls back to api_public_url then server_url. Leave empty to disable PRM discovery.
+    mcp_resource_url: str = ""
 
     logs_filepath: str = "./data/logs/conversations.jsonl"
 

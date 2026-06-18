@@ -196,6 +196,7 @@ class SearchHit(BaseModel):
 
     # Precompute a few field values for easier access
     @computed_field
+    @property
     def title(self) -> str | None:
         """Get the first title, prioritizing English language titles."""
         titles = self.source.titles
@@ -205,6 +206,7 @@ class SearchHit(BaseModel):
         )
 
     @computed_field
+    @property
     def description(self) -> str | None:
         """Get the first description, prioritizing English language descriptions."""
         descriptions = self.source.descriptions
@@ -214,12 +216,14 @@ class SearchHit(BaseModel):
         )
 
     @computed_field
+    @property
     def creator(self) -> str | None:
         """Get the first creator name if available."""
         creators = self.source.creators
         return next((creator.creator_name for creator in creators), None) if creators else None
 
     @computed_field
+    @property
     def publication_date(self) -> str | None:
         """Get publication date from dates with dateType `Issued`."""
         dates = self.source.dates

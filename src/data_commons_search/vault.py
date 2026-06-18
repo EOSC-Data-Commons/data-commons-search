@@ -193,8 +193,8 @@ class ApiKeyIn(BaseModel):
 
 
 class ApiKeyOut(BaseModel):
-    key_id: str
-    key_value: str
+    id: str
+    value: str
 
 
 class ApiKeyListOut(BaseModel):
@@ -258,7 +258,7 @@ async def get_api_key(
         raise _vault_http_error(exc) from exc
     if value is None:
         raise HTTPException(status_code=404, detail=f"API key '{key_id}' not found")
-    return ApiKeyOut(key_id=key_id, key_value=value)
+    return ApiKeyOut(id=key_id, value=value)
 
 
 @router.delete("/{key_id}", summary="Delete an API key from EGI Secret Store")

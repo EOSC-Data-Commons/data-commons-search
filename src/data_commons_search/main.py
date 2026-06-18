@@ -26,13 +26,21 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.callbacks import Callbacks
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
+from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
+from mcp.server.auth.routes import create_protected_resource_routes
 from mcp.types import TextContent
+from pydantic import AnyHttpUrl
+from starlette.middleware.authentication import AuthenticationMiddleware
 
 from data_commons_search.auth import (
+    EgiTokenVerifier,
     UserInfo,
     apply_pending_auth_cookies,
+    oidc_issuer_url,
     optional_auth,
     require_auth,
 )
@@ -98,7 +106,25 @@ app = FastAPI(
     # root_path=settings.root_path,
 )
 
-app.mount("/mcp", mcp.streamable_http_app(), name="mcp")
+# Mount the MCP server with optional OAuth: a valid EGI bearer token is decoded and exposed to tools, but auth is NOT required
+mcp_app = mcp.streamable_http_app()
+# add_middleware prepends, so the last one added runs outermost: AuthenticationMiddleware populates
+# scope["user"], then AuthContextMiddleware copies it into the contextvar tools read.
+mcp_app.add_middleware(AuthContextMiddleware)
+mcp_app.add_middleware(AuthenticationMiddleware, backend=BearerAuthBackend(EgiTokenVerifier()))
+app.mount("/mcp", mcp_app, name="mcp")
+
+# Advertise OAuth 2.0 Protected Resource Metadata (RFC 9728) at /.well-known/oauth-protected-resource/mcp
+# so MCP clients can discover EGI AAI as the auth server and run standard OAuth flow
+_mcp_resource = settings.mcp_resource_url or settings.api_public_url or settings.server_url
+if _mcp_resource:
+    app.router.routes.extend(
+        create_protected_resource_routes(
+            resource_url=AnyHttpUrl(f"{_mcp_resource.rstrip('/')}/mcp"),
+            authorization_servers=[AnyHttpUrl(oidc_issuer_url())],
+            resource_name=settings.app_name,
+        )
+    )
 
 
 if settings.cors_enabled:
@@ -110,14 +136,23 @@ if settings.cors_enabled:
         allow_headers=["*"],
     )
 
-mcp_client = MultiServerMCPClient(
-    {
-        "data-commons-search": {
-            "url": f"{settings.server_url}/mcp",
-            "transport": "streamable_http",
-        }
+
+def build_mcp_client(access_token: str | None = None) -> MultiServerMCPClient:
+    """Build an MCP client for the in-process server.
+
+    When the caller is authenticated, forward their EGI access token as a Bearer header so the
+    MCP server can resolve the user (used by tools to log/personalize). The internal MCP calls
+    are plain HTTP requests that do not inherit the browser's auth cookie, so the token must be
+    passed explicitly here.
+    """
+    connection: StreamableHttpConnection = {
+        "url": f"{settings.server_url}/mcp",
+        "transport": "streamable_http",
     }
-)
+    if access_token:
+        connection["headers"] = {"Authorization": f"Bearer {access_token}"}
+    return MultiServerMCPClient({"data-commons-search": connection})
+
 
 # Initialize Langfuse client with host from settings (keys still come from env vars)
 langfuse = Langfuse(
@@ -151,8 +186,11 @@ async def chat_endpoint(
     if search_input.thread_id is None:
         search_input.thread_id = uuid.uuid4().hex
 
+    # Forward the validated EGI access token (set by optional_auth) to the MCP calls so tools
+    # can resolve the logged-in user. None for anonymous callers.
+    access_token = getattr(request.state, "access_token", None)
     response = StreamingResponse(
-        stream_chat_response(search_input, user),
+        stream_chat_response(search_input, user, access_token),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -294,9 +332,13 @@ class ConversationBuilder:
 MAX_AGENT_ITERATIONS = 8
 
 
-async def stream_chat_response(search_input: AgentInput, user: UserInfo | None = None) -> AsyncGenerator[str, None]:
+async def stream_chat_response(
+    search_input: AgentInput, user: UserInfo | None = None, access_token: str | None = None
+) -> AsyncGenerator[str, None]:
     """Stream the chat response with an agentic tool-calling loop."""
     run_id = str(uuid.uuid4())
+    # Per-request client so the user's bearer token (if any) reaches the MCP server.
+    mcp_client = build_mcp_client(access_token)
     token_usage = TokenUsageMetadata()
     t0 = time.monotonic()
 
@@ -405,6 +447,7 @@ async def stream_chat_response(search_input: AgentInput, user: UserInfo | None =
                             lc_msgs.append(ToolMessage(content=err_text, tool_call_id=tool_call_id))
                             continue
 
+                        logger.info(f"Tool call completed '{tool_call_name}'")
                         parsed: Any = None
                         if tool_call_res.structuredContent:
                             parsed = tool_call_res.structuredContent
@@ -521,17 +564,23 @@ async def rerank_search_results(
     last_msg_content = last_msg.content if last_msg and isinstance(last_msg.content, str) else ""
     formatted_context = f"Found {search_results.total_found} datasets relevant to the query '{last_msg_content}':\n\n"
     for i, hit in enumerate(search_results.hits[: settings.search_results_count]):
-        formatted_context += f"index {i + 1}:\n"
+        formatted_context += f"{i + 1}:\n"
         formatted_context += f"   {' | '.join([title.title for title in hit.source.titles])}\n"
         if hit.source.dates:
             formatted_context += (
                 f"   Dates: {' | '.join([f'{date.date_type}: {date.date}' for date in hit.source.dates])}\n"
             )
         if hit.source.creators:
-            formatted_context += f"   Authors: {', '.join([creator.creator_name for creator in hit.source.creators if creator.creator_name])}\n"
+            authors = ", ".join([creator.creator_name for creator in hit.source.creators if creator.creator_name])
+            if len(authors) > 200:
+                authors = authors[:200].rstrip() + "..."
+            formatted_context += f"   Authors: {authors}\n"
         if hit.source.subjects:
             formatted_context += f"   Keywords: {', '.join([subj.subject for subj in hit.source.subjects])}\n"
-        formatted_context += f"   Description: {hit.description}\n\n"
+        desc = hit.description or ""
+        if len(desc) > 800:
+            desc = desc[:800].rstrip() + "..."
+        formatted_context += f"   Description: {desc}\n\n"
 
     # Only pass plain user/assistant text turns; AIMessages with tool_calls would leave a
     # dangling tool-call turn (no matching ToolMessage yet) and cause the provider to drop
