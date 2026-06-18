@@ -202,12 +202,12 @@ def run_search(test_item: TestItem, condition: Condition) -> tuple[list[str], fl
         events = process_stream(resp)
     # console.log(f"[dim]-> done, {len(events)} events in {time.monotonic() - t0:.1f}s[/]")
     elapsed = time.monotonic() - t0
+    # Aggregate hits across every rerank event (a turn may run several searches)
     found_ids: list[str] = []
     for event in events:
-        if event.get("type") == "TOOL_CALL_RESULT" and event.get("tool_call_id") == "rerank_results":
+        if event.get("type") == "TOOL_CALL_RESULT" and str(event.get("tool_call_id", "")).startswith("rerank_"):
             ranked = SummarizedSearchResponse.model_validate_json(event["content"])
-            found_ids = [hit.id for hit in ranked.hits]
-            break
+            found_ids.extend(hit.id for hit in ranked.hits)
     return found_ids, elapsed
 
 

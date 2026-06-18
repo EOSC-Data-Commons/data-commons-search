@@ -110,10 +110,10 @@ async def one_request(
                     event = json.loads(stripped[6:])
                 except json.JSONDecodeError:
                     continue
-                if event.get("type") == "TOOL_CALL_RESULT" and event.get("tool_call_id") == "rerank_results":
+                if event.get("type") == "TOOL_CALL_RESULT" and str(event.get("tool_call_id", "")).startswith("rerank_"):
                     try:
                         ranked = json.loads(event["content"])
-                        res.n_hits = len(ranked.get("hits", []))
+                        res.n_hits += len(ranked.get("hits", []))
                     except (json.JSONDecodeError, KeyError, TypeError):
                         pass
         res.total = time.monotonic() - t0

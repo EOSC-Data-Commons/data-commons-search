@@ -217,6 +217,29 @@ def _truncate_hits(data: Any, limit: int = 10) -> Any:
     return data
 
 
+def _parse_tool_result(res: Any) -> tuple[Any, str]:
+    """Extract `(parsed_json_or_none, raw_text)` from an MCP tool call result."""
+    if res.structuredContent:
+        return res.structuredContent, json.dumps(res.structuredContent)
+    if res.content:
+        text = "".join(rc.text for rc in res.content if isinstance(rc, TextContent) and rc.text)
+        try:
+            return json.loads(text), text
+        except (json.JSONDecodeError, ValueError):
+            return None, text
+    return None, ""
+
+
+def _as_search_results(parsed: Any) -> SearchResults | None:
+    """Return `SearchResults` when the parsed payload matches that shape, else None."""
+    if parsed is None:
+        return None
+    try:
+        return SearchResults.model_validate(parsed)
+    except Exception:
+        return None
+
+
 class ConversationBuilder:
     """Helper class to build conversation details from messages."""
 
@@ -424,8 +447,10 @@ async def stream_chat_response(
                         break
                     # Append assistant message (with tool_calls) so the model sees its own turn
                     lc_msgs.append(AIMessage(content=accumulated.content or "", tool_calls=tool_calls))
-                    rerank_summary: str | None = None
-                    # Execute each tool call sequentially, emitting events and feeding results back
+                    # Collects summaries of rerank steps for logging purpose
+                    rerank_summaries: list[str] = []
+                    # Flips True for anything that isn't a reranked search
+                    needs_synthesis = False
                     for tool_call in tool_calls:
                         tool_call_id = str(tool_call.get("id") or f"call_{uuid.uuid4().hex}")
                         tool_call_name = str(tool_call["name"])
@@ -445,53 +470,43 @@ async def stream_chat_response(
                             for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, err_text):
                                 yield _chunk
                             lc_msgs.append(ToolMessage(content=err_text, tool_call_id=tool_call_id))
+                            needs_synthesis = True
                             continue
 
                         logger.info(f"Tool call completed '{tool_call_name}'")
-                        parsed: Any = None
-                        if tool_call_res.structuredContent:
-                            parsed = tool_call_res.structuredContent
-                            tool_results_str = json.dumps(parsed)
-                        elif tool_call_res.content:
-                            tool_results_str = "".join(
-                                rc.text for rc in tool_call_res.content if isinstance(rc, TextContent) and rc.text
+                        parsed, tool_results_str = _parse_tool_result(tool_call_res)
+                        search_results = _as_search_results(parsed)
+
+                        if search_results is not None and search_results.hits:
+                            # Auto rerank search results with LLM
+                            rerank_id = f"rerank_{tool_call_id}"
+                            for _chunk in conv.start_tool_call(rerank_id, "rerank_results", tool_call_args, msg_id):
+                                yield _chunk
+                            ranked = await rerank_search_results(
+                                search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
                             )
-                            try:
-                                parsed = json.loads(tool_results_str)
-                            except (json.JSONDecodeError, ValueError):
-                                parsed = None
+                            ranked_dump = ranked.model_dump(by_alias=True)
+                            for _chunk in conv.end_tool_call(
+                                rerank_id, "rerank_results", msg_id, json.dumps(ranked_dump)
+                            ):
+                                yield _chunk
+                            lc_msgs.append(
+                                ToolMessage(content=json.dumps(_truncate_hits(ranked_dump)), tool_call_id=tool_call_id)
+                            )
+                            rerank_summaries.append(ranked.summary)
                         else:
-                            tool_results_str = ""
+                            # Non-search tool (or empty results): end normally and feed the raw result back.
+                            for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
+                                yield _chunk
+                            lc_history_str = (
+                                json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
+                            )
+                            lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
+                            needs_synthesis = True
 
-                        # If the first tool call returned search results, rerank them with the LLM
-                        if parsed is not None:
-                            try:
-                                search_results = SearchResults.model_validate(parsed)
-                            except Exception:
-                                search_results = None
-                            if search_results is not None and search_results.hits:
-                                tool_call_id = "rerank_results"
-                                tool_call_name = "rerank_results"
-                                for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, {}, msg_id):
-                                    yield _chunk
-                                ranked = await rerank_search_results(
-                                    search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
-                                )
-                                parsed = ranked.model_dump(by_alias=True)
-                                tool_results_str = json.dumps(parsed)
-                                rerank_summary = ranked.summary
-
-                        # To UI we send the full search results (30)
-                        for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
-                            yield _chunk
-                        # But for the conversation history and future tool calls, we cap it to 10 to avoid token overload
-                        lc_history_str = json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
-                        lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
-
-                    # If rerank_summary already generated, then we dont need 1 more iteration with the LLM to generate the response,
-                    # we can directly use the rerank_summary as the final response
-                    if rerank_summary:
-                        final_text += rerank_summary
+                    # Stop loop if only reranked searches with summary, no need for extra LLM turn
+                    if rerank_summaries and not needs_synthesis:
+                        final_text += "\n\n".join(rerank_summaries)
                         break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
@@ -559,10 +574,10 @@ async def rerank_search_results(
     Returns:
         SummarizedSearchResponse with reranked hits and summary
     """
-    # Format the context for the LLM
-    last_msg = chat_messages[-1] if chat_messages else None
-    last_msg_content = last_msg.content if last_msg and isinstance(last_msg.content, str) else ""
-    formatted_context = f"Found {search_results.total_found} datasets relevant to the query '{last_msg_content}':\n\n"
+    # Use the latest user turn as the query
+    last_user = next((m for m in reversed(chat_messages) if isinstance(m, HumanMessage)), None)
+    query = last_user.content if last_user and isinstance(last_user.content, str) else ""
+    formatted_context = f"Found {search_results.total_found} results relevant to the query '{query}':\n\n"
     for i, hit in enumerate(search_results.hits[: settings.search_results_count]):
         formatted_context += f"{i + 1}:\n"
         formatted_context += f"   {' | '.join([title.title for title in hit.source.titles])}\n"

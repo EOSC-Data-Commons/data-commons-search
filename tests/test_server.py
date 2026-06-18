@@ -67,19 +67,20 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
             # Ensure a `RunStartedEvent` is received first
             assert RunStartedEvent.model_validate(events[0])
 
-            # Find the rerank results event (may be absent when the model answers without search)
-            rerank_event = None
-            for event in events:
-                if event.get("type") == "TOOL_CALL_RESULT" and event.get("tool_call_id") == "rerank_results":
-                    rerank_event = event
-                    break
+            # Find the rerank results events
+            rerank_events = [
+                event
+                for event in events
+                if event.get("type") == "TOOL_CALL_RESULT" and str(event.get("tool_call_id", "")).startswith("rerank_")
+            ]
 
-            if rerank_event is not None:
-                # Model went through the full search → rerank pipeline
-                ranked_response = SummarizedSearchResponse.model_validate_json(rerank_event["content"])
-                assert len(ranked_response.hits) > 0, "Rerank returned no hits"
-                for hit in ranked_response.hits:
-                    assert hit.id, "Every ranked hit must have a non-empty id"
+            if rerank_events:
+                # Model went through the full search → rerank pipeline (once per search)
+                for rerank_event in rerank_events:
+                    ranked_response = SummarizedSearchResponse.model_validate_json(rerank_event["content"])
+                    assert len(ranked_response.hits) > 0, "Rerank returned no hits"
+                    for hit in ranked_response.hits:
+                        assert hit.id, "Every ranked hit must have a non-empty id"
             else:
                 # Model answered via the fallback (text summary) or no-results path —
                 # verify the run still completed with at least one text or tool-result event.
