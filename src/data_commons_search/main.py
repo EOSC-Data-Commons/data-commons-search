@@ -240,6 +240,56 @@ def _as_search_results(parsed: Any) -> SearchResults | None:
         return None
 
 
+class ThinkStripper:
+    """Removes `<think>...</think>` reasoning blocks from a streamed text.
+
+    Stateful across chunks: the tags may be split across chunk boundaries, so any
+    trailing text that could be the start of a tag is buffered until the next chunk.
+    Flip `settings.stream_thinking` to forward thinking to the frontend instead.
+    """
+
+    OPEN = "<think>"
+    CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._in_think = False
+
+    @staticmethod
+    def _partial_suffix_len(buffer: str, tag: str) -> int:
+        """Length of the longest buffer suffix that is a (partial) prefix of `tag`."""
+        for n in range(min(len(buffer), len(tag) - 1), 0, -1):
+            if buffer.endswith(tag[:n]):
+                return n
+        return 0
+
+    def feed(self, delta: str) -> str:
+        """Return the visible text in `delta`, withholding anything inside think blocks."""
+        self._buffer += delta
+        out = ""
+        while True:
+            if self._in_think:
+                idx = self._buffer.find(self.CLOSE)
+                if idx == -1:
+                    keep = self._partial_suffix_len(self._buffer, self.CLOSE)
+                    self._buffer = self._buffer[len(self._buffer) - keep :]
+                    break
+                self._buffer = self._buffer[idx + len(self.CLOSE) :]
+                self._in_think = False
+            else:
+                idx = self._buffer.find(self.OPEN)
+                if idx == -1:
+                    keep = self._partial_suffix_len(self._buffer, self.OPEN)
+                    cut = len(self._buffer) - keep
+                    out += self._buffer[:cut]
+                    self._buffer = self._buffer[cut:]
+                    break
+                out += self._buffer[:idx]
+                self._buffer = self._buffer[idx + len(self.OPEN) :]
+                self._in_think = True
+        return out
+
+
 class ConversationBuilder:
     """Helper class to build conversation details from messages."""
 
@@ -405,11 +455,15 @@ async def stream_chat_response(
                     text_started = False
                     iter_text = ""
                     start_time = get_timestamp()
+                    # Hide <think>...</think> reasoning unless the frontend opts in via settings
+                    stripper = None if settings.stream_thinking else ThinkStripper()
                     async for chunk in llm_with_tools.astream(lc_msgs):
                         if not isinstance(chunk, AIMessageChunk):
                             continue
                         accumulated = chunk if accumulated is None else accumulated + chunk
                         delta = chunk.content if isinstance(chunk.content, str) else ""
+                        if stripper is not None:
+                            delta = stripper.feed(delta)
                         if delta:
                             if not text_started:
                                 yield sse(

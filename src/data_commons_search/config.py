@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     llm_max_tokens: int = 8192  # or 4096
     llm_seed: int = 42
+    # Whether to forward the model's <think>...</think> reasoning to the frontend.
+    # Off until the frontend can render thinking content properly.
+    stream_thinking: bool = False
 
     # The name of the application used for display
     app_name: str = "EOSC Data Commons MCP"
