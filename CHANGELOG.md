@@ -1,5 +1,16 @@
 # 🪵 Changelog
 
+## [0.7.9](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.8..v0.7.9) - 2026-06-25
+
+### ⛰️ Features
+
+- Add optional auth in MCP tools, update response schema of vault operations, truncate some fields from search hits (description, authors) to save tokens - ([fba4ccb](https://github.com/EOSC-Data-Commons/data-commons-search/commit/fba4ccbdd42c11ebe93302eeca129abeb0e1969c))
+
+### 🚜 Refactor
+
+- Improve agent loop to handle when datasets and tools are asked in the same query - ([ed849eb](https://github.com/EOSC-Data-Commons/data-commons-search/commit/ed849eb8d1ffd60be9ba34795df7975ebaab377b))
+- Add `aup_accepted` column to `User` table, for now strip thinking message (needs to be handled properly on frontend) - ([33af304](https://github.com/EOSC-Data-Commons/data-commons-search/commit/33af304bac71b76bfdc5fe982d32b379181f0eb1))
+
 ## [0.7.8](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.7..v0.7.8) - 2026-06-17
 
 ### ⛰️ Features
