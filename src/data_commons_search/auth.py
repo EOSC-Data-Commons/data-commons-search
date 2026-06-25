@@ -373,7 +373,7 @@ async def auth_login(request: Request, redirect: str | None = None) -> RedirectR
     params = {
         "client_id": settings.oidc_client_id,
         "response_type": "code",
-        "scope": "openid email profile voperson_id",  # TODO: offline_access
+        "scope": "openid email profile voperson_id offline_access",
         "redirect_uri": _callback_url(request),
         "state": state,
         "code_challenge": code_challenge,
