@@ -22,7 +22,8 @@ from ag_ui.core import (
 )
 from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from langchain.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.callbacks import Callbacks
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -103,7 +104,11 @@ app = FastAPI(
     description="A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/) MatchMaker service, providing natural language search over open-access datasets. It exposes an HTTP POST endpoint and supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to help users discover datasets and tools via a Large Language Model-assisted search.",
     version="1.0.0",
     lifespan=lifespan,
-    root_path=settings.root_path,
+    # Default docs disabled; custom /docs below uses a RELATIVE openapi_url so the spec resolves both
+    # locally and behind the Cyfronet reverse proxy path prefix WITHOUT needing root_path (which breaks
+    # the deployment — see data-commons-search commit 556bd00).
+    docs_url=None,
+    redoc_url=None,
 )
 
 # Mount the MCP server with optional OAuth: a valid EGI bearer token is decoded and exposed to tools, but auth is NOT required
@@ -742,8 +747,24 @@ async def get_stats() -> DbStats:
 
 @app.get("/", include_in_schema=False)
 async def root_redirect() -> RedirectResponse:
-    """Redirect root path to the Swagger UI /docs."""
-    return RedirectResponse(url="/docs")
+    """Redirect root path to the Swagger UI /docs. Relative target so it works behind a path-prefix proxy."""
+    return RedirectResponse(url="docs")
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html() -> HTMLResponse:
+    """Swagger UI with a RELATIVE openapi_url so the spec resolves correctly behind a path-prefix proxy.
+
+    On localhost the page is /docs and fetches /openapi.json; behind the proxy the page is
+    /api/search/docs and fetches /api/search/openapi.json (which the proxy strips back to /openapi.json).
+    """
+    # No oauth2_redirect_url: it can't be expressed relative to the prefix (Swagger prepends
+    # window.location.origin, dropping the path), and it's only used by the interactive OAuth2
+    # Authorize flow — pasting a bearer token does not need it.
+    return get_swagger_ui_html(
+        openapi_url="openapi.json",
+        title=f"{app.title} - Swagger UI",
+    )
 
 
 app.include_router(auth_router)
