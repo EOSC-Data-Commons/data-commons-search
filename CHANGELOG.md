@@ -1,5 +1,7 @@
 # 🪵 Changelog
 
+## [0.7.10](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.9..v0.7.10) - 2026-06-26
+
 ## [0.7.9](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.8..v0.7.9) - 2026-06-25
 
 ### ⛰️ Features
