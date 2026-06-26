@@ -103,7 +103,7 @@ app = FastAPI(
     description="A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-projects/eosc-data-commons/) MatchMaker service, providing natural language search over open-access datasets. It exposes an HTTP POST endpoint and supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) to help users discover datasets and tools via a Large Language Model-assisted search.",
     version="1.0.0",
     lifespan=lifespan,
-    # root_path=settings.root_path,
+    root_path=settings.root_path,
 )
 
 # Mount the MCP server with optional OAuth: a valid EGI bearer token is decoded and exposed to tools, but auth is NOT required
