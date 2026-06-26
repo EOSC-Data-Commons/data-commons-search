@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     log_json: bool = True
     log_level: str = "INFO"
 
-    filemetrix_api: str = "https://filemetrix.labs.dansdemo.nl/api/v1"
-    tool_registry_api: str = "https://dev.tools-registry.eosc-data-commons.eu/api/v1/tools"
+    filemetrix_api: str = "https://filemetrix.eosc-data-commons.dansdemo.nl/api/v1"
+    tool_registry_api: str = "https://tools-registry.eosc-data-commons.eu/api/v1/tools"
 
     # OpenSearch settings
     opensearch_index: str = "test_datacite"
