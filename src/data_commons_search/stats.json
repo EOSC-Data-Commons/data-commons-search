@@ -1,32 +1,33 @@
 {
-  "generated_at": "2026-06-17T12:39:39.399020Z",
-  "total_records": 390061,
-  "total_datasets": 390061,
+  "api_version": "0.7.11",
+  "generated_at": "2026-06-26T12:00:20.994677Z",
+  "total_records": 446182,
+  "total_datasets": 446182,
   "repositories": [
     {
       "code": "DANS",
       "name": "Data Archiving and Networked Services",
-      "record_count": 192074,
-      "datasets": 192074,
+      "record_count": 194651,
+      "datasets": 194651,
       "endpoints_with_records": 5,
-      "synced_to_opensearch": 192074,
-      "latest_record_datestamp": "2026-05-09T00:00:24Z",
+      "synced_to_opensearch": 194651,
+      "latest_record_datestamp": "2026-06-16T00:10:33Z",
       "top_subjects": [
         {
           "subject": "Arts and Humanities",
-          "count": 182779
+          "count": 185277
         },
         {
           "subject": "metal",
-          "count": 89970
+          "count": 91181
         },
         {
           "subject": "copper alloy",
-          "count": 64442
+          "count": 65360
         },
         {
           "subject": "coin/coin-related",
-          "count": 22630
+          "count": 22846
         },
         {
           "subject": "coins (money)",
@@ -34,19 +35,19 @@
         },
         {
           "subject": "brooches",
-          "count": 13473
+          "count": 13472
         },
         {
           "subject": "silver",
-          "count": 11110
+          "count": 11183
         },
         {
           "subject": "Social Sciences",
-          "count": 7782
+          "count": 7847
         },
         {
           "subject": "lead alloy",
-          "count": 6193
+          "count": 6276
         },
         {
           "subject": "Archeologisch: booronderzoek",
@@ -62,11 +63,11 @@
         },
         {
           "subject": "Earth and Environmental Sciences",
-          "count": 5123
+          "count": 5141
         },
         {
           "subject": "iron",
-          "count": 4416
+          "count": 4443
         },
         {
           "subject": "belt buckles",
@@ -77,11 +78,11 @@
     {
       "code": "PANOSC",
       "name": "PaNOSC",
-      "record_count": 187301,
-      "datasets": 187301,
-      "endpoints_with_records": 9,
-      "synced_to_opensearch": 187301,
-      "latest_record_datestamp": "2026-05-11T12:47:51Z",
+      "record_count": 187778,
+      "datasets": 187778,
+      "endpoints_with_records": 11,
+      "synced_to_opensearch": 187778,
+      "latest_record_datestamp": "2026-06-16T14:54:13Z",
       "top_subjects": [
         {
           "subject": "ISIS",
@@ -121,7 +122,7 @@
         },
         {
           "subject": "D2O",
-          "count": 7398
+          "count": 7401
         },
         {
           "subject": "2001",
@@ -133,7 +134,7 @@
         },
         {
           "subject": "cooling",
-          "count": 5988
+          "count": 5990
         },
         {
           "subject": "2000",
@@ -141,34 +142,105 @@
         },
         {
           "subject": "Empty",
-          "count": 5508
+          "count": 5511
+        }
+      ]
+    },
+    {
+      "code": "ONE",
+      "name": "Onedata",
+      "record_count": 44885,
+      "datasets": 44885,
+      "endpoints_with_records": 1,
+      "synced_to_opensearch": 44885,
+      "latest_record_datestamp": "2026-06-16T13:26:38Z",
+      "top_subjects": [
+        {
+          "subject": "Earth Observation",
+          "count": 44755
+        },
+        {
+          "subject": "Geospatial data",
+          "count": 44755
+        },
+        {
+          "subject": "copernicus",
+          "count": 44652
+        },
+        {
+          "subject": "dem",
+          "count": 44652
+        },
+        {
+          "subject": "digital elevation model",
+          "count": 44652
+        },
+        {
+          "subject": "digital surface model",
+          "count": 44652
+        },
+        {
+          "subject": "eea-10",
+          "count": 44652
+        },
+        {
+          "subject": "elevation",
+          "count": 44652
+        },
+        {
+          "subject": "european",
+          "count": 44652
+        },
+        {
+          "subject": "glo-30",
+          "count": 44652
+        },
+        {
+          "subject": "glo-90",
+          "count": 44652
+        },
+        {
+          "subject": "global",
+          "count": 44652
+        },
+        {
+          "subject": "tandem-x",
+          "count": 44652
+        },
+        {
+          "subject": "terrain",
+          "count": 44652
+        },
+        {
+          "subject": "topography",
+          "count": 44652
         }
       ]
     },
     {
       "code": "HAL",
       "name": "HAL Science",
-      "record_count": 7645,
-      "datasets": 7645,
+      "record_count": 7735,
+      "datasets": 7735,
       "endpoints_with_records": 1,
-      "synced_to_opensearch": 7645,
-      "latest_record_datestamp": "2026-05-11T00:00:00Z",
+      "synced_to_opensearch": 7735,
+      "latest_record_datestamp": "2026-06-16T00:00:00Z",
       "top_subjects": [
         {
           "subject": "[SDV] Life Sciences [q-bio]",
-          "count": 963
+          "count": 976
         },
         {
           "subject": "[SDE] Environmental Sciences",
-          "count": 737
+          "count": 746
         },
         {
           "subject": "[SDE.BE] Environmental Sciences/Biodiversity and Ecology",
-          "count": 494
+          "count": 501
         },
         {
           "subject": "[SDU] Sciences of the Universe [physics]",
-          "count": 402
+          "count": 407
         },
         {
           "subject": "[SHS] Humanities and Social Sciences",
@@ -176,54 +248,64 @@
         },
         {
           "subject": "[INFO] Computer Science [cs]",
-          "count": 304
+          "count": 305
         },
         {
           "subject": "[CHIM] Chemical Sciences",
-          "count": 230
+          "count": 231
         },
         {
           "subject": "[SDU.OCEAN] Sciences of the Universe [physics]/Ocean, Atmosphere",
-          "count": 213
+          "count": 224
         },
         {
           "subject": "[INFO.INFO-AI] Computer Science [cs]/Artificial Intelligence [cs.AI]",
-          "count": 202
+          "count": 207
         },
         {
           "subject": "[PHYS] Physics [physics]",
-          "count": 182
+          "count": 185
         },
         {
           "subject": "[SDE.MCG] Environmental Sciences/Global Changes",
-          "count": 180
+          "count": 184
         },
         {
           "subject": "[SHS.ARCHEO] Humanities and Social Sciences/Archaeology and Prehistory",
-          "count": 177
+          "count": 179
         },
         {
           "subject": "[SDU.ENVI] Sciences of the Universe [physics]/Continental interfaces, environment",
-          "count": 166
+          "count": 171
         },
         {
           "subject": "[CHIM.ORGA] Chemical Sciences/Organic chemistry",
           "count": 164
         },
         {
-          "subject": "[SPI] Engineering Sciences [physics]",
+          "subject": "[SDV.EE] Life Sciences [q-bio]/Ecology, environment",
           "count": 159
         }
       ]
     },
     {
+      "code": "MDDB",
+      "name": "Molecular Dynamics Data Bank",
+      "record_count": 7526,
+      "datasets": 7526,
+      "endpoints_with_records": 1,
+      "synced_to_opensearch": 7526,
+      "latest_record_datestamp": "2026-05-29T00:00:00Z",
+      "top_subjects": []
+    },
+    {
       "code": "SWISS",
       "name": "SwissUbase",
-      "record_count": 2157,
-      "datasets": 2157,
+      "record_count": 2167,
+      "datasets": 2167,
       "endpoints_with_records": 1,
-      "synced_to_opensearch": 2157,
-      "latest_record_datestamp": "2026-05-11T09:14:10Z",
+      "synced_to_opensearch": 2167,
+      "latest_record_datestamp": "2026-06-16T08:31:08Z",
       "top_subjects": [
         {
           "subject": "PSYCHOLOGIE",
@@ -231,15 +313,15 @@
         },
         {
           "subject": "Comportements politiques et attitudes",
-          "count": 398
+          "count": 400
         },
         {
           "subject": "Political behaviour and attitudes",
-          "count": 398
+          "count": 400
         },
         {
           "subject": "Politisches Verhalten und politische Einstellungen",
-          "count": 398
+          "count": 400
         },
         {
           "subject": "HABITAT ET AMENAGEMENT DU TERRITOIRE",
@@ -279,46 +361,46 @@
         },
         {
           "subject": "Gouvernement, systèmes et organisations politiques",
-          "count": 284
+          "count": 285
         },
         {
           "subject": "Government, political systems and organisations",
-          "count": 284
+          "count": 285
         }
       ]
     },
     {
       "code": "DABAR",
       "name": "Digital Academic Repository",
-      "record_count": 764,
-      "datasets": 764,
+      "record_count": 772,
+      "datasets": 772,
       "endpoints_with_records": 1,
-      "synced_to_opensearch": 764,
-      "latest_record_datestamp": "2026-05-04T00:00:00Z",
+      "synced_to_opensearch": 772,
+      "latest_record_datestamp": "2026-06-01T00:00:00Z",
       "top_subjects": [
         {
           "subject": "Natural Sciences",
-          "count": 317
+          "count": 319
         },
         {
           "subject": "Prirodne znanosti",
-          "count": 317
+          "count": 319
         },
         {
           "subject": "Društvene znanosti",
-          "count": 156
+          "count": 160
         },
         {
           "subject": "Social Sciences",
-          "count": 156
+          "count": 160
         },
         {
           "subject": "Chemistry",
-          "count": 148
+          "count": 149
         },
         {
           "subject": "Kemija",
-          "count": 148
+          "count": 149
         },
         {
           "subject": "Technical Sciences",
@@ -330,11 +412,11 @@
         },
         {
           "subject": "Biomedicina i zdravstvo",
-          "count": 100
+          "count": 101
         },
         {
           "subject": "Biomedicine and Health Sciences",
-          "count": 100
+          "count": 101
         },
         {
           "subject": "Fizika",
@@ -346,128 +428,230 @@
         },
         {
           "subject": "Humanističke znanosti",
-          "count": 73
+          "count": 75
         },
         {
           "subject": "Humanities",
-          "count": 73
+          "count": 74
         },
         {
-          "subject": "Basic Medical Sciences",
-          "count": 58
-        }
-      ]
-    },
-    {
-      "code": "ONE",
-      "name": "Onedata",
-      "record_count": 120,
-      "datasets": 120,
-      "endpoints_with_records": 1,
-      "synced_to_opensearch": 120,
-      "latest_record_datestamp": "2026-05-13T10:17:00Z",
-      "top_subjects": [
-        {
-          "subject": "annotations",
-          "count": 50
-        },
-        {
-          "subject": "call",
-          "count": 50
-        },
-        {
-          "subject": "experiment information",
-          "count": 50
-        },
-        {
-          "subject": "gene expression",
-          "count": 50
-        },
-        {
-          "subject": "processed expression values",
-          "count": 50
-        },
-        {
-          "subject": "Bruker BioSpin MRI GmbH",
-          "count": 9
-        },
-        {
-          "subject": "genome-wide association study",
-          "count": 9
-        },
-        {
-          "subject": "GWAS",
-          "count": 9
-        },
-        {
-          "subject": "Head_Supine",
-          "count": 9
-        },
-        {
-          "subject": "ishc-myeline",
-          "count": 9
-        },
-        {
-          "subject": "MR_Modality",
-          "count": 9
-        },
-        {
-          "subject": "Parameter Values",
-          "count": 9
-        },
-        {
-          "subject": "Quadruped",
-          "count": 9
-        },
-        {
-          "subject": "FEMALE",
-          "count": 5
-        },
-        {
-          "subject": "UNKNOWN",
-          "count": 4
+          "subject": "Informacijske znanosti",
+          "count": 60
         }
       ]
     },
     {
       "code": "DATAVERSELV",
       "name": "Dataverse Latvia EOSC Node",
-      "record_count": 0,
-      "datasets": 0,
-      "endpoints_with_records": 0,
-      "synced_to_opensearch": 0,
-      "latest_record_datestamp": null,
-      "top_subjects": []
-    },
-    {
-      "code": "DASCH",
-      "name": "DaSCH",
-      "record_count": 0,
-      "datasets": 0,
-      "endpoints_with_records": 0,
-      "synced_to_opensearch": 0,
-      "latest_record_datestamp": null,
-      "top_subjects": []
+      "record_count": 354,
+      "datasets": 354,
+      "endpoints_with_records": 3,
+      "synced_to_opensearch": 354,
+      "latest_record_datestamp": "2026-06-09T23:00:00Z",
+      "top_subjects": [
+        {
+          "subject": "Medicine, Health and Life Sciences",
+          "count": 147
+        },
+        {
+          "subject": "Social Sciences",
+          "count": 56
+        },
+        {
+          "subject": "dictionary",
+          "count": 40
+        },
+        {
+          "subject": "text",
+          "count": 20
+        },
+        {
+          "subject": "Chemistry",
+          "count": 18
+        },
+        {
+          "subject": "working risks",
+          "count": 17
+        },
+        {
+          "subject": "COVID-19",
+          "count": 16
+        },
+        {
+          "subject": "employer",
+          "count": 16
+        },
+        {
+          "subject": "manual annotation",
+          "count": 16
+        },
+        {
+          "subject": "morphology",
+          "count": 16
+        },
+        {
+          "subject": "occupational health and safety specialists",
+          "count": 16
+        },
+        {
+          "subject": "patients with registered occupational diseases",
+          "count": 16
+        },
+        {
+          "subject": "working conditions",
+          "count": 16
+        },
+        {
+          "subject": "employee",
+          "count": 15
+        },
+        {
+          "subject": "hybrid dependency-constituency grammar",
+          "count": 15
+        }
+      ]
     },
     {
       "code": "FINBIF",
       "name": "FinBIF",
-      "record_count": 0,
-      "datasets": 0,
-      "endpoints_with_records": 0,
-      "synced_to_opensearch": 0,
-      "latest_record_datestamp": null,
-      "top_subjects": []
+      "record_count": 237,
+      "datasets": 237,
+      "endpoints_with_records": 1,
+      "synced_to_opensearch": 237,
+      "latest_record_datestamp": "2026-06-16T14:55:44.907389Z",
+      "top_subjects": [
+        {
+          "subject": "Finland",
+          "count": 57
+        },
+        {
+          "subject": "World",
+          "count": 37
+        },
+        {
+          "subject": "Aves",
+          "count": 15
+        },
+        {
+          "subject": "Lepidoptera",
+          "count": 13
+        },
+        {
+          "subject": "Biota",
+          "count": 9
+        },
+        {
+          "subject": "mostly East Uusimaa",
+          "count": 8
+        },
+        {
+          "subject": "Europe",
+          "count": 7
+        },
+        {
+          "subject": "Coleoptera",
+          "count": 6
+        },
+        {
+          "subject": "Hymenoptera",
+          "count": 6
+        },
+        {
+          "subject": "Insecta",
+          "count": 6
+        },
+        {
+          "subject": "Mammalia",
+          "count": 6
+        },
+        {
+          "subject": "Bryophyta",
+          "count": 5
+        },
+        {
+          "subject": "Diptera",
+          "count": 5
+        },
+        {
+          "subject": "Eastern Fennoscandia",
+          "count": 5
+        },
+        {
+          "subject": "Lichen-forming Ascomycota",
+          "count": 5
+        }
+      ]
     },
     {
-      "code": "MDDB",
-      "name": "Molecular Dynamics Data Bank",
-      "record_count": 0,
-      "datasets": 0,
-      "endpoints_with_records": 0,
-      "synced_to_opensearch": 0,
-      "latest_record_datestamp": null,
-      "top_subjects": []
+      "code": "DASCH",
+      "name": "DaSCH",
+      "record_count": 77,
+      "datasets": 77,
+      "endpoints_with_records": 1,
+      "synced_to_opensearch": 77,
+      "latest_record_datestamp": "2025-07-01T00:00:00Z",
+      "top_subjects": [
+        {
+          "subject": "10404 Visual arts and Art history",
+          "count": 11
+        },
+        {
+          "subject": "10402 Archaeology",
+          "count": 8
+        },
+        {
+          "subject": "Archaeology",
+          "count": 7
+        },
+        {
+          "subject": "10302 Swiss history",
+          "count": 6
+        },
+        {
+          "subject": "10502 Romance languages and literature",
+          "count": 6
+        },
+        {
+          "subject": "10102 Religious studies, Theology",
+          "count": 5
+        },
+        {
+          "subject": "10301 General history (without pre-and early history)",
+          "count": 5
+        },
+        {
+          "subject": "10101 Philosophy",
+          "count": 4
+        },
+        {
+          "subject": "10201 Sociology",
+          "count": 4
+        },
+        {
+          "subject": "10501 German and English languages and literature",
+          "count": 4
+        },
+        {
+          "subject": "Cultural anthropology",
+          "count": 4
+        },
+        {
+          "subject": "Digital Humanities",
+          "count": 4
+        },
+        {
+          "subject": "Geology",
+          "count": 4
+        },
+        {
+          "subject": "Switzerland",
+          "count": 4
+        },
+        {
+          "subject": "10103 Ecclesiastical history",
+          "count": 3
+        }
+      ]
     },
     {
       "code": "ZENODO",
