@@ -784,10 +784,10 @@ app.include_router(vault_router)
 # NOTE: commented out for now as this is done directly from the frontend when a user show interest for a dataset (e.g. clicks on it)
 
 # # https://confluence.egi.eu/display/EOSCDATACOMMONS/API+Definitions+and+Implementation+Guidelines
-# # https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=cesnet%2Fqwen3-coder
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "cesnet/qwen3-coder", "stream": true}'
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "cesnet/qwen3-coder", "stream": true}'
-# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "cesnet/qwen3-coder", "stream": true}'
+# # https://dev.matchmaker.eosc-data-commons.eu/search?q=search for data about Cognitive load in cyclists while navigating in traffic&model=cesnet%2Fagentic
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "Datasets about representation of dogs in medieval time"}], "model": "cesnet/agentic", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Harelbeke Evolis"}], "model": "cesnet/agentic", "stream": true}'
+# # curl -X POST http://localhost:8001/chat -H "Content-Type: application/json" -H "Authorization: SECRET_KEY" -d '{"messages": [{"role": "user", "content": "search for data about Cognitive load in cyclists while navigating in traffic"}], "model": "cesnet/agentic", "stream": true}'
 # async def get_relevant_tools(search_hits: list[SearchHit]) -> None:
 #     """Fetch file extensions and relevant tools from the FileMetrix API in parallel for each hit's DOI,
 #     and update hits in-place.

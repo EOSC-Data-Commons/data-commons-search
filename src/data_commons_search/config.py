@@ -64,11 +64,11 @@ class Settings(BaseSettings):
     # reranker_url: str = "https://llm.ai.e-infra.cz/v1/rerank"
 
     # LLM providers API keys
-    default_llm_model: str = "cesnet/qwen3-coder"
+    default_llm_model: str = "cesnet/agentic"
     # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
     # default_llm_model: str = "mistralai/mistral-medium-latest"
-    # Model used as a fallback when the primary provider rate-limits us (HTTP 429).
-    # Set to "" to disable the fallback.
+    # Model used as a fallback when the primary provider errors (rate-limit, invalid
+    # model name, auth error, outage, etc.). Set to "" to disable the fallback.
     fallback_llm_model: str = "mistralai/mistral-medium-latest"
     cesnet_api_key: str = ""
     fedllm_api_key: str = ""

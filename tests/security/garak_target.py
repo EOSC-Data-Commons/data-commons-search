@@ -10,7 +10,7 @@ system prompt, tool-calling loop, and the dataset-search guardrails.
 
 Config via environment variables:
   GARAK_CHAT_URL      target endpoint   (default http://localhost:8000/chat)
-  GARAK_CHAT_MODEL    model to request  (default cesnet/qwen3-coder)
+  GARAK_CHAT_MODEL    model to request  (default cesnet/agentic)
   GARAK_CHAT_API_KEY  Bearer token      (only needed if the server sets chat_api_key)
   GARAK_CHAT_TIMEOUT  per-request seconds (default 120)
 
@@ -25,7 +25,7 @@ import os
 import httpx
 
 CHAT_URL = os.environ.get("GARAK_CHAT_URL", "http://localhost:8000/chat")
-CHAT_MODEL = os.environ.get("GARAK_CHAT_MODEL", "cesnet/qwen3-coder")
+CHAT_MODEL = os.environ.get("GARAK_CHAT_MODEL", "cesnet/agentic")
 CHAT_API_KEY = os.environ.get("GARAK_CHAT_API_KEY", "")
 CHAT_TIMEOUT = float(os.environ.get("GARAK_CHAT_TIMEOUT", "120"))
 

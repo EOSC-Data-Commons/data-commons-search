@@ -17,7 +17,7 @@ Start the server, then from the repo root:
 ```bash
 # optional overrides (defaults shown)
 export GARAK_CHAT_URL=http://localhost:8000/chat
-export GARAK_CHAT_MODEL=cesnet/qwen3-coder
+export GARAK_CHAT_MODEL=cesnet/agentic
 export GARAK_CHAT_API_KEY=          # only if the server sets chat_api_key
 
 PYTHONPATH=tests/security uv run garak --config tests/security/garak.yaml
