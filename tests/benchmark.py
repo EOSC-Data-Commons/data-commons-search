@@ -120,7 +120,7 @@ class Condition:
 
 def all_conditions() -> list[Condition]:
     llm_models = [
-        "cesnet/qwen3-coder",
+        "cesnet/agentic",
         "mistralai/mistral-medium-latest",
         # "cesnet/gpt-oss-120b",
         # "cesnet/kimi-k2.5",

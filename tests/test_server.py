@@ -12,7 +12,7 @@ from tests.benchmark import TestItem, test_items
 # When running the tests, ensure the server is running on port 8000
 server_port = 8000
 llm_models = [
-    "cesnet/qwen3-coder",
+    "cesnet/agentic",
     # "cesnet/gpt-oss-120b",
     # "cesnet/kimi-k2.5",
     # "cesnet/deepseek-v3.2",

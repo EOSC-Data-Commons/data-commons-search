@@ -166,7 +166,7 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 >
 > ```sh
 > curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
-> 	-d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "cesnet/qwen3-coder"}'
+> 	-d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "cesnet/agentic"}'
 > ```
 >
 > With authenticated user access token from http://127.0.0.1:8000/auth/login:
@@ -174,7 +174,7 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > ```sh
 > curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
 > -H "Cookie: access_token=$ACCESS_TOKEN" \
-> -d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "cesnet/qwen3-coder"}'
+> -d '{"items": [{"type": "message", "role": "user", "content": [{"text": "Educational datasets from Switzerland covering student assessments, language competencies, and learning outcomes, including experimental or longitudinal studies on pupils or students."}]}], "model": "cesnet/agentic"}'
 > ```
 >
 > Get last conversation:
@@ -189,7 +189,7 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > curl -H "Authorization: Bearer $CESNET_API_KEY" https://llm.ai.e-infra.cz/v1/models | jq ".data[].id"
 > ```
 >
-> Recommended model: `cesnet/qwen3-coder`
+> Recommended model: `cesnet/agentic`
 
 ### 🔐 Secrets Store
 
