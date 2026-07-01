@@ -1,5 +1,7 @@
 # 🪵 Changelog
 
+## [0.7.13](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.12..v0.7.13) - 2026-07-01
+
 ## [0.7.12](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.11..v0.7.12) - 2026-07-01
 
 ## [0.7.11](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.10..v0.7.11) - 2026-06-26
