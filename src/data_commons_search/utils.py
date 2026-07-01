@@ -12,7 +12,7 @@ from langchain_core.callbacks import Callbacks
 from langchain_core.runnables import Runnable
 from langchain_mistralai import ChatMistralAI
 from langchain_openai import ChatOpenAI
-from openai import RateLimitError
+from openai import OpenAIError
 from pydantic import BaseModel, SecretStr
 
 from data_commons_search.config import settings
@@ -186,8 +186,9 @@ def load_chat_model_with_fallback(
     configure: Callable[[BaseChatModel], Runnable] = lambda m: m,
     callbacks: Callbacks = None,
 ) -> tuple[Runnable, str]:
-    """Load `model` and wrap it so a provider rate-limit (HTTP 429) transparently
-    retries on `settings.fallback_llm_model`.
+    """Load `model` and wrap it so any provider-side failure (rate-limit, invalid/renamed
+    model name, auth error, provider outage, etc.) transparently retries on
+    `settings.fallback_llm_model`.
 
     `configure` applies the same setup (e.g. `bind_tools` or `with_structured_output`)
     to both the primary and the fallback model, so the fallback is a drop-in replacement.
@@ -200,7 +201,7 @@ def load_chat_model_with_fallback(
     if not fallback_model or fallback_model == model:
         return primary, model
     fallback = configure(load_chat_model(fallback_model, callbacks))
-    return primary.with_fallbacks([fallback], exceptions_to_handle=(RateLimitError,)), model
+    return primary.with_fallbacks([fallback], exceptions_to_handle=(OpenAIError,)), model
 
 
 # def get_msg_text(msg: BaseMessage) -> str:
