@@ -2,11 +2,36 @@
 
 ## [0.7.13](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.12..v0.7.13) - 2026-07-01
 
+### 🐛 Bug Fixes
+
+- Exclude the `dev` dependency group (`garak`, which pulls in `torch` and the full CUDA/nvidia stack) from the Docker image, and stop the container entrypoint from calling `uv run` (which silently re-synced and reinstalled those dev-only dependencies on every container start). Reduces the production image from ~9GB to ~760MB - ([60dd940](https://github.com/EOSC-Data-Commons/data-commons-search/commit/60dd9408da61f965ad1df8acdd15b88a0b5ad3bb))
+
 ## [0.7.12](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.11..v0.7.12) - 2026-07-01
+
+### 🐛 Bug Fixes
+
+- Update default LLM model, fallback logic, and error handling - ([c96daa8](https://github.com/EOSC-Data-Commons/data-commons-search/commit/c96daa8cf3a7ea539ba9d0068b53047198484823))
+
+### 🧪 Testing
+
+- Update default model to `cesnet/agentic` across documentation and tests - ([5c90ad6](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5c90ad6021e03b86aa87879eec822abad63ef4ab))
 
 ## [0.7.11](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.10..v0.7.11) - 2026-06-26
 
+### 🐛 Bug Fixes
+
+- Update `filemetrix` and `tool-registry` API URLs to their production endpoints - ([deaebbd](https://github.com/EOSC-Data-Commons/data-commons-search/commit/deaebbd55cf1d73a52b4c819c5c2f8993fdaf59d))
+- Enable `root_path` configuration for reverse proxy support in `config.py` and `main.py` - ([5ba3208](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5ba3208c4c5f51919fcf8a62a31779ff92e1f931))
+
+### 🛠️ Miscellaneous Tasks
+
+- Update stats.json - ([fa3b7d1](https://github.com/EOSC-Data-Commons/data-commons-search/commit/fa3b7d1e5568aaa6876a4d182a4e9cf6cf9c0328))
+
 ## [0.7.10](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.9..v0.7.10) - 2026-06-26
+
+### 🐛 Bug Fixes
+
+- Add missing `offline_access` scope to the OIDC authorization request so refresh tokens are actually issued - ([a1282ee](https://github.com/EOSC-Data-Commons/data-commons-search/commit/a1282ee8bc648ab0dda01d4e805005fd1023077d))
 
 ## [0.7.9](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.8..v0.7.9) - 2026-06-25
 
