@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     # reranker_url: str = "https://llm.ai.e-infra.cz/v1/rerank"
 
     # LLM providers API keys
-    default_llm_model: str = "blablador/alias-fast"
+    default_llm_model: str = "cesnet/agentic"
     # default_llm_model: str = "openrouter/qwen/qwen3-coder-flash"
     # default_llm_model: str = "mistralai/mistral-medium-latest"
     # Model used as a fallback when the primary provider errors (rate-limit, invalid
