@@ -22,6 +22,20 @@ from data_commons_search.utils import logger
 # Pre-computed stats file, shipped with the package (see module docstring).
 STATS_FILE = Path(__file__).parent / "stats.json"
 
+# The upstream `repositories.code` value is used verbatim as the short display label for each
+# repository (e.g. on the landing-page "Datasets per repository" chart). A few of those codes are
+# stale/abbreviated in the source table; override them here so /stats reports each repository's
+# canonical short name. SwissUbase's code, for instance, is stored as "SWISS" — which is what users
+# saw mislabelled on the chart.
+REPOSITORY_CODE_OVERRIDES = {
+    "SWISS": "SWISSUbase",
+}
+
+
+def _display_code(code: str) -> str:
+    """Map an upstream repository code to its canonical short display code (identity if none)."""
+    return REPOSITORY_CODE_OVERRIDES.get(code, code)
+
 
 # Records count + dataset count per repository. LEFT JOIN so repos with zero harvested
 # records still appear (record_count = 0 = not yet harvested).
@@ -90,7 +104,7 @@ def compute_stats() -> DbStats:
 
     repositories = [
         RepositoryStats(
-            code=row["code"],
+            code=_display_code(row["code"]),
             name=row["name"],
             record_count=row["record_count"],
             datasets=row["datasets"],

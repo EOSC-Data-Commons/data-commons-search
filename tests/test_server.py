@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -5,8 +7,9 @@ import httpx
 import pytest
 from ag_ui.core import RunStartedEvent
 
+from data_commons_search import main
 from data_commons_search.config import settings
-from data_commons_search.models import SummarizedSearchResponse
+from data_commons_search.models import AgentInput, SummarizedSearchResponse
 from tests.benchmark import TestItem, test_items
 
 # When running the tests, ensure the server is running on port 8000
@@ -136,6 +139,47 @@ def test_app(test_item: TestItem, llm_model: str) -> None:
 #     for hit in dummy_search_hits:
 #         print(f"Hit {hit.id} has file extensions: {hit.file_extensions}")
 #         assert hit.file_extensions and len(hit.file_extensions) >= 1
+
+
+class _HangingLLM:
+    """A model whose stream never yields, to simulate a stalled provider."""
+
+    async def astream(self, _msgs: Any):
+        await asyncio.sleep(30)
+        yield  # pragma: no cover - never reached before the timeout fires
+
+
+class _FakeMCPClient:
+    async def get_tools(self) -> list[Any]:
+        return []
+
+    @contextlib.asynccontextmanager
+    async def session(self, _name: str):
+        yield object()
+
+
+async def test_stream_emits_run_error_on_llm_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stalled LLM generation must terminate the stream with a RUN_ERROR event."""
+    # Shrink the timeout so the stalled stream trips it immediately.
+    monkeypatch.setattr(main, "LLM_STREAM_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(main, "build_mcp_client", lambda *_a, **_k: _FakeMCPClient())
+    monkeypatch.setattr(main, "load_chat_model_with_fallback", lambda *_a, **_k: (_HangingLLM(), "fake-model"))
+    monkeypatch.setattr(main, "propagate_attributes", lambda *_a, **_k: contextlib.nullcontext())
+    monkeypatch.setattr(main, "LangfuseCallbackHandler", lambda *_a, **_k: object())
+    monkeypatch.setattr(main.langfuse, "start_as_current_observation", lambda *_a, **_k: contextlib.nullcontext())
+    monkeypatch.setattr(main.langfuse, "update_current_span", lambda *_a, **_k: None)
+
+    search_input = AgentInput.model_validate(
+        {
+            "items": [{"type": "message", "role": "user", "content": [{"text": "ocean data"}]}],
+            "model": "fake-model",
+        }
+    )
+
+    events = [chunk async for chunk in main.stream_chat_response(search_input, user=None, access_token=None)]
+    joined = "".join(events)
+    assert "RUN_STARTED" in joined
+    assert "RUN_ERROR" in joined
 
 
 def process_stream(resp: httpx.Response) -> list[Any]:

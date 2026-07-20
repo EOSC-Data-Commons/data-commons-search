@@ -1,5 +1,6 @@
 """HTTP API to deploy the EOSC Data Commons search agent."""
 
+import asyncio
 import contextlib
 import json
 import time
@@ -404,6 +405,14 @@ class ConversationBuilder:
 
 MAX_AGENT_ITERATIONS = 8
 
+# Upper bounds on how long a single LLM generation / tool call may run before we
+# give up. Without these a hung provider or MCP tool leaves the SSE stream open
+# forever with nothing sent; on timeout the TimeoutError propagates to the
+# stream's error handler, which emits a terminal RUN_ERROR the client renders
+# (a single tool timeout instead degrades to a tool-error the agent reacts to).
+LLM_STREAM_TIMEOUT_S = 60.0
+TOOL_CALL_TIMEOUT_S = 30.0
+
 
 async def stream_chat_response(
     search_input: AgentInput, user: UserInfo | None = None, access_token: str | None = None
@@ -457,7 +466,21 @@ async def stream_chat_response(
                     start_time = get_timestamp()
                     # Hide <think>...</think> reasoning unless the frontend opts in via settings
                     stripper = None if settings.stream_thinking else ThinkStripper()
-                    async for chunk in llm_with_tools.astream(lc_msgs):
+                    # Bound the whole generation with a deadline: each chunk must
+                    # arrive before it, otherwise a stalled provider would hold the
+                    # stream open forever.
+                    # (asyncio.timeout is 3.11+).
+                    loop = asyncio.get_running_loop()
+                    deadline = loop.time() + LLM_STREAM_TIMEOUT_S
+                    stream = llm_with_tools.astream(lc_msgs)
+                    while True:
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            raise TimeoutError("LLM generation timed out")
+                        try:
+                            chunk = await asyncio.wait_for(anext(stream), remaining)
+                        except StopAsyncIteration:
+                            break
                         if not isinstance(chunk, AIMessageChunk):
                             continue
                         accumulated = chunk if accumulated is None else accumulated + chunk
@@ -517,7 +540,9 @@ async def stream_chat_response(
                             yield _chunk
 
                         try:
-                            tool_call_res = await session.call_tool(tool_call_name, tool_call_args)
+                            tool_call_res = await asyncio.wait_for(
+                                session.call_tool(tool_call_name, tool_call_args), TOOL_CALL_TIMEOUT_S
+                            )
                         except Exception as exc:
                             logger.error(f"Tool call '{tool_call_name}' failed: {exc}")
                             err_text = f"Error calling tool {tool_call_name}: {exc}"
@@ -536,8 +561,11 @@ async def stream_chat_response(
                             rerank_id = f"rerank_{tool_call_id}"
                             for _chunk in conv.start_tool_call(rerank_id, "rerank_results", tool_call_args, msg_id):
                                 yield _chunk
-                            ranked = await rerank_search_results(
-                                search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
+                            ranked = await asyncio.wait_for(
+                                rerank_search_results(
+                                    search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
+                                ),
+                                LLM_STREAM_TIMEOUT_S,
                             )
                             ranked_dump = ranked.model_dump(by_alias=True)
                             for _chunk in conv.end_tool_call(
