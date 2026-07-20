@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     # model name, auth error, outage, etc.). Set to "" to disable the fallback.
     fallback_llm_model: str = "mistralai/mistral-medium-latest"
     cesnet_api_key: str = ""
+    blablador_api_key: str = ""
     fedllm_api_key: str = ""
     openrouter_api_key: str = ""
     mistral_api_key: str = ""

@@ -79,6 +79,16 @@ def load_chat_model(model: str, callbacks: Callbacks = None) -> BaseChatModel:
     """
     provider, model_name = model.split("/", maxsplit=1)
 
+    if provider == "blablador":
+        return ChatOpenAI(
+            base_url="https://api.blablador.fz-juelich.de/v1",
+            model=model_name,
+            api_key=SecretStr(settings.blablador_api_key),
+            stream_usage=True,
+            callbacks=callbacks,
+            # max_completion_tokens=settings.llm_max_tokens, # NOTE: breaks litellm
+        )
+
     if provider == "cesnet" or provider == "einfracz":
         # LiteLLM API https://llm.ai.e-infra.cz
         return ChatOpenAI(
