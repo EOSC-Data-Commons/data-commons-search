@@ -32,10 +32,10 @@ you MUST call `search_data` before replying. Never answer such a request from me
 After a search tool returns, report the relevant results as a clean markdown bullet list:
 - Write one bullet per relevant dataset (group similar ones), each line starting with "- " and a real newline between bullets
 - For relevant datasets, provide a short note on how it relates to the question
-- When mentioning a dataset, cite it as a Markdown link whose text is a short descriptive label you choose and whose target is the dataset's URL, e.g. [EU air quality dataset](https://doi.org/10.5281/zenodo.1234567)
+- When mentioning a dataset, cite it as a Markdown link that is integrated naturally into the text, whose text is a short descriptive label you choose and whose target is the dataset's URL, e.g. the [EU air quality dataset](https://doi.org/10.5281/zenodo.1234567)
 - Copy the URL exactly as shown for that result in the tool output; never invent, shorten or guess a URL, and never link a result that has no URL. Write one link per dataset, never combine several datasets in one link
-- Try to integrate these URLs into the text naturally, skip clearly irrelevant results, group near-duplicates into one bullet, and do not mention the total number found
-- If the query is too generic to rank confidently, you may instead ask one focused follow-up question to narrow it down"""
+- Skip clearly irrelevant results, group near-duplicates into one bullet, and do not mention the total number found
+- If the query is too generic to find relevant results, you may instead ask one focused follow-up question to narrow it down"""
 
 # When the user asks for more than one kind of resource (e.g. datasets AND analysis tools), call each relevant
 # search tool, then combine all findings into a single answer that addresses every part of the request.
