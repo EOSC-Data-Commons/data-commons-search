@@ -5,7 +5,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Generator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,7 +25,6 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.callbacks import Callbacks
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from langfuse import Langfuse, propagate_attributes
@@ -63,16 +62,13 @@ from data_commons_search.models import (
     DbStats,
     LangChainResponseMetadata,
     MessageItem,
-    RerankingOutput,
-    RerankingOutputResponse,
     SearchResults,
-    SummarizedSearchResponse,
     TextPart,
     TokenUsageMetadata,
     ToolCallItem,
     ToolResultItem,
 )
-from data_commons_search.prompts import RERANK_PROMPT, TOOL_CALL_PROMPT
+from data_commons_search.prompts import SYSTEM_PROMPT
 from data_commons_search.rate_limit import RateLimiter
 from data_commons_search.stats import load_stats
 from data_commons_search.utils import (
@@ -331,8 +327,8 @@ class ConversationBuilder:
                 continue
         return new_msgs
 
-    def add_msg(self, content: str, start_time: int | None = None) -> Generator[str, None]:
-        """Emit a complete assistant text message (start → chunk → end) and record it."""
+    def add_msg(self, content: str, start_time: int | None = None) -> str:
+        """Record a complete assistant text message and return its (start → chunk → end) SSE events."""
         self.items.append(
             MessageItem(
                 id=self.msg_id,
@@ -341,16 +337,18 @@ class ConversationBuilder:
                 metadata={"model": self.model},
             )
         )
-        yield sse(
-            TextMessageStartEvent(message_id=self.msg_id, role="assistant", timestamp=start_time or get_timestamp())
+        return (
+            sse(
+                TextMessageStartEvent(message_id=self.msg_id, role="assistant", timestamp=start_time or get_timestamp())
+            )
+            + sse(TextMessageChunkEvent(delta=content, timestamp=get_timestamp()))
+            + sse(TextMessageEndEvent(message_id=self.msg_id, timestamp=get_timestamp()))
         )
-        yield sse(TextMessageChunkEvent(delta=content, timestamp=get_timestamp()))
-        yield sse(TextMessageEndEvent(message_id=self.msg_id, timestamp=get_timestamp()))
 
     def start_tool_call(
         self, tool_call_id: str, tool_call_name: str, arguments: dict[str, Any], parent_message_id: str
-    ) -> Generator[str, None]:
-        """Add a tool call start event to the conversation."""
+    ) -> str:
+        """Record a tool call and return its (start → args) SSE events."""
         self.items.append(
             ToolCallItem(
                 id=tool_call_id,
@@ -359,15 +357,14 @@ class ConversationBuilder:
                 parent_message_id=parent_message_id,
             )
         )
-        yield sse(
+        return sse(
             ToolCallStartEvent(
                 tool_call_id=tool_call_id,
                 tool_call_name=tool_call_name,
                 parent_message_id=parent_message_id,
                 timestamp=get_timestamp(),
             )
-        )
-        yield sse(
+        ) + sse(
             ToolCallArgsEvent(
                 tool_call_id=tool_call_id,
                 delta=json.dumps(arguments),
@@ -375,10 +372,8 @@ class ConversationBuilder:
             )
         )
 
-    def end_tool_call(
-        self, tool_call_id: str, tool_call_name: str, msg_id: str, tool_results_str: str
-    ) -> Generator[str, None]:
-        """Add a tool call end event to the conversation."""
+    def end_tool_call(self, tool_call_id: str, tool_call_name: str, msg_id: str, tool_results_str: str) -> str:
+        """Record a tool result and return its (result → end) SSE events."""
         self.items.append(
             ToolResultItem(
                 call_id=tool_call_id,
@@ -386,7 +381,7 @@ class ConversationBuilder:
                 metadata={"name": tool_call_name, "model": self.model},
             )
         )
-        yield sse(
+        return sse(
             ToolCallResultEvent(
                 message_id=msg_id,
                 tool_call_id=tool_call_id,
@@ -394,8 +389,7 @@ class ConversationBuilder:
                 role="tool",
                 timestamp=get_timestamp(),
             )
-        )
-        yield sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
+        ) + sse(ToolCallEndEvent(tool_call_id=tool_call_id, timestamp=get_timestamp()))
 
     def store_messages(self) -> None:
         """Store the conversation messages in the database."""
@@ -453,16 +447,17 @@ async def stream_chat_response(
                 callbacks=[langfuse_handler],
             )
 
-            lc_msgs: list[AnyMessage] = [get_system_prompt(TOOL_CALL_PROMPT), *conv.to_langchain()]
+            lc_msgs: list[AnyMessage] = [get_system_prompt(SYSTEM_PROMPT), *conv.to_langchain()]
 
             async with mcp_client.session("data-commons-search") as session:
                 for _iter in range(MAX_AGENT_ITERATIONS):
-                    # Stream LLM response, accumulating chunks and forwarding text deltas
+                    # Stream the LLM turn. Dataset citations are plain Markdown links to the dataset
+                    # URL, so the text streams through untouched.
                     msg_id = uuid.uuid4().hex
                     conv.msg_id = msg_id
                     accumulated: AIMessageChunk | None = None
                     text_started = False
-                    iter_text = ""
+                    emitted = ""  # text already streamed to the frontend
                     start_time = get_timestamp()
                     # Hide <think>...</think> reasoning unless the frontend opts in via settings
                     stripper = None if settings.stream_thinking else ThinkStripper()
@@ -485,19 +480,21 @@ async def stream_chat_response(
                             continue
                         accumulated = chunk if accumulated is None else accumulated + chunk
                         delta = chunk.content if isinstance(chunk.content, str) else ""
+                        if not delta:
+                            continue
                         if stripper is not None:
                             delta = stripper.feed(delta)
-                        if delta:
-                            if not text_started:
-                                yield sse(
-                                    TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=start_time)
-                                )
-                                text_started = True
-                            iter_text += delta
-                            yield sse(TextMessageChunkEvent(delta=delta, timestamp=get_timestamp()))
+                        if not delta:
+                            continue
+                        if not text_started:
+                            yield sse(TextMessageStartEvent(message_id=msg_id, role="assistant", timestamp=start_time))
+                            text_started = True
+                        yield sse(TextMessageChunkEvent(delta=delta, timestamp=get_timestamp()))
+                        emitted += delta
 
                     if text_started:
                         yield sse(TextMessageEndEvent(message_id=msg_id, timestamp=get_timestamp()))
+                    iter_text = emitted
                     if accumulated is None:
                         break
 
@@ -524,10 +521,6 @@ async def stream_chat_response(
                         break
                     # Append assistant message (with tool_calls) so the model sees its own turn
                     lc_msgs.append(AIMessage(content=accumulated.content or "", tool_calls=tool_calls))
-                    # Collects summaries of rerank steps for logging purpose
-                    rerank_summaries: list[str] = []
-                    # Flips True for anything that isn't a reranked search
-                    needs_synthesis = False
                     for tool_call in tool_calls:
                         tool_call_id = str(tool_call.get("id") or f"call_{uuid.uuid4().hex}")
                         tool_call_name = str(tool_call["name"])
@@ -536,8 +529,7 @@ async def stream_chat_response(
                             logger.info(f"Calling tool '{tool_call_name}' · \"{tool_call_args}\"", extra=tool_call_args)
                         except Exception:
                             logger.info(f"Calling tool '{tool_call_name}' (args not serializable)")
-                        for _chunk in conv.start_tool_call(tool_call_id, tool_call_name, tool_call_args, msg_id):
-                            yield _chunk
+                        yield conv.start_tool_call(tool_call_id, tool_call_name, tool_call_args, msg_id)
 
                         try:
                             tool_call_res = await asyncio.wait_for(
@@ -546,50 +538,26 @@ async def stream_chat_response(
                         except Exception as exc:
                             logger.error(f"Tool call '{tool_call_name}' failed: {exc}")
                             err_text = f"Error calling tool {tool_call_name}: {exc}"
-                            for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, err_text):
-                                yield _chunk
+                            yield conv.end_tool_call(tool_call_id, tool_call_name, msg_id, err_text)
                             lc_msgs.append(ToolMessage(content=err_text, tool_call_id=tool_call_id))
-                            needs_synthesis = True
                             continue
 
                         logger.info(f"Tool call completed '{tool_call_name}'")
                         parsed, tool_results_str = _parse_tool_result(tool_call_res)
                         search_results = _as_search_results(parsed)
-
                         if search_results is not None and search_results.hits:
-                            # Auto rerank search results with LLM
-                            rerank_id = f"rerank_{tool_call_id}"
-                            for _chunk in conv.start_tool_call(rerank_id, "rerank_results", tool_call_args, msg_id):
-                                yield _chunk
-                            ranked = await asyncio.wait_for(
-                                rerank_search_results(
-                                    search_input.model, [langfuse_handler], lc_msgs, search_results, token_usage
-                                ),
-                                LLM_STREAM_TIMEOUT_S,
-                            )
-                            ranked_dump = ranked.model_dump(by_alias=True)
-                            for _chunk in conv.end_tool_call(
-                                rerank_id, "rerank_results", msg_id, json.dumps(ranked_dump)
-                            ):
-                                yield _chunk
+                            search_result_str = json.dumps(parsed) if parsed is not None else tool_results_str
+                            yield conv.end_tool_call(tool_call_id, tool_call_name, msg_id, search_result_str)
                             lc_msgs.append(
-                                ToolMessage(content=json.dumps(_truncate_hits(ranked_dump)), tool_call_id=tool_call_id)
+                                ToolMessage(content=_format_hits_for_llm(search_results), tool_call_id=tool_call_id)
                             )
-                            rerank_summaries.append(ranked.summary)
                         else:
                             # Non-search tool (or empty results): end normally and feed the raw result back.
-                            for _chunk in conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str):
-                                yield _chunk
+                            yield conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str)
                             lc_history_str = (
                                 json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
                             )
                             lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
-                            needs_synthesis = True
-
-                    # Stop loop if only reranked searches with summary, no need for extra LLM turn
-                    if rerank_summaries and not needs_synthesis:
-                        final_text += "\n\n".join(rerank_summaries)
-                        break
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
     except Exception as exc:
@@ -597,6 +565,7 @@ async def stream_chat_response(
         with contextlib.suppress(Exception):
             yield sse(RunErrorEvent(message=str(exc) or exc.__class__.__name__, timestamp=get_timestamp()))
     finally:
+        # Store the conversation in db
         if user is not None:
             new_items_start = max(0, initial_items_count - 1)
             new_items = conv.items[new_items_start:]
@@ -606,7 +575,6 @@ async def stream_chat_response(
                     thread_id=conv.thread_id,
                     items=new_items,
                 )
-
         last_user_msg = ""
         for item in reversed(search_input.items):
             if isinstance(item, MessageItem) and item.role == "user":
@@ -638,93 +606,38 @@ async def stream_chat_response(
             )
 
 
-async def rerank_search_results(
-    model: str,
-    callbacks: Callbacks,
-    chat_messages: list[AnyMessage],
-    search_results: SearchResults,
-    token_usage: TokenUsageMetadata,
-) -> SummarizedSearchResponse:
-    """Rerank search results using LLM with structured output.
+def _format_hits_for_llm(search_results: SearchResults) -> str:
+    """Format search hits for the LLM so it can cite a dataset as an ordinary Markdown link to the
+    dataset's own URL, e.g. `[Global Carbon Budget](https://doi.org/10.18160/GCP-2023)`.
 
-    Args:
-        model: The LLM model (provider/name) to use for reranking
-        callbacks: LangChain callbacks (e.g. Langfuse) passed to the model
-        chat_messages: Original chat messages for context
-        search_results: Search results to rerank
-
-    Returns:
-        SummarizedSearchResponse with reranked hits and summary
+    The URL shown here is `SearchHit.dataset_url`, which is also serialized in the tool result sent
+    to the frontend - so the frontend resolves a citation to its result card by matching hrefs, with
+    no server-side rewriting and no custom link syntax. Hits without a URL are still listed (the
+    model can describe them) but cannot be cited as a link.
     """
-    # Use the latest user turn as the query
-    last_user = next((m for m in reversed(chat_messages) if isinstance(m, HumanMessage)), None)
-    query = last_user.content if last_user and isinstance(last_user.content, str) else ""
-    formatted_context = f"Found {search_results.total_found} results relevant to the query '{query}':\n\n"
+    lines = [
+        f"Found {search_results.total_found} results. Cite a dataset inline as a normal Markdown link with a short "
+        "descriptive label and the dataset's URL as the target, e.g. [Global Carbon Budget](https://doi.org/10.18160/GCP-2023). "
+        "Copy each URL exactly as written below.\n"
+    ]
     for i, hit in enumerate(search_results.hits[: settings.search_results_count]):
-        formatted_context += f"{i + 1}:\n"
-        formatted_context += f"   {' | '.join([title.title for title in hit.source.titles])}\n"
+        lines.append(f"{i + 1}.")
+        lines.append(f"   {' | '.join(title.title for title in hit.source.titles)}")
+        lines.append(f"   URL: {hit.dataset_url or '(none - do not link this one)'}")
         if hit.source.dates:
-            formatted_context += (
-                f"   Dates: {' | '.join([f'{date.date_type}: {date.date}' for date in hit.source.dates])}\n"
-            )
+            lines.append(f"   Dates: {' | '.join(f'{date.date_type}: {date.date}' for date in hit.source.dates)}")
         if hit.source.creators:
-            authors = ", ".join([creator.creator_name for creator in hit.source.creators if creator.creator_name])
+            authors = ", ".join(creator.creator_name for creator in hit.source.creators if creator.creator_name)
             if len(authors) > 200:
                 authors = authors[:200].rstrip() + "..."
-            formatted_context += f"   Authors: {authors}\n"
+            lines.append(f"   Authors: {authors}")
         if hit.source.subjects:
-            formatted_context += f"   Keywords: {', '.join([subj.subject for subj in hit.source.subjects])}\n"
+            lines.append(f"   Keywords: {', '.join(subj.subject for subj in hit.source.subjects)}")
         desc = hit.description or ""
         if len(desc) > 800:
             desc = desc[:800].rstrip() + "..."
-        formatted_context += f"   Description: {desc}\n\n"
-
-    # Only pass plain user/assistant text turns; AIMessages with tool_calls would leave a
-    # dangling tool-call turn (no matching ToolMessage yet) and cause the provider to drop
-    # the structured-output tool call. Also strip system messages so the rerank prompt is first.
-    rerank_context: list[AnyMessage] = [
-        m for m in chat_messages if isinstance(m, HumanMessage) or (isinstance(m, AIMessage) and not m.tool_calls)
-    ]
-    rerank_msgs: list[AnyMessage] = [
-        get_system_prompt(RERANK_PROMPT),
-        *rerank_context,
-        HumanMessage(content=formatted_context),
-    ]
-    try:
-        # Call LLM with structured output for reranking; rate-limit falls back to the fallback model.
-        llm_structured_rerank, _ = load_chat_model_with_fallback(
-            model,
-            lambda m: m.with_structured_output(RerankingOutput, method="json_schema", include_raw=True),
-            callbacks=callbacks,
-        )
-        resp = await llm_structured_rerank.ainvoke(rerank_msgs)
-        # logger.info(f"Reranking with context:\n{resp}")
-        rerank_resp = RerankingOutputResponse.model_validate(resp)
-        token_usage += LangChainResponseMetadata.model_validate(rerank_resp.raw.response_metadata).token_usage
-        # if rerank_resp.parsed is None:
-        #     raise ValueError(f"LLM returned no structured rerank output: {rerank_resp.parsing_error}")
-
-        # Only keep the hits that were sent for reranking
-        reranked_hits = search_results.hits[: settings.search_results_count]
-
-        # Map LLM scores back by 1-based index (robust: small integers, unlike opaque ids the LLM
-        # mistypes/omits). For any hit the LLM failed to score, fall back to its OpenSearch relevance
-        # score instead of 0.0 - a missed near-duplicate must NOT crater to the bottom.
-        score_by_index = {h.index: h.score for h in rerank_resp.parsed.hits}
-        for i, hit in enumerate(reranked_hits):
-            hit.score = score_by_index.get(i + 1, hit.opensearch_score)
-
-        # Sort hits by score in descending order
-        reranked_hits.sort(key=lambda h: h.score if h.score is not None else 0.0, reverse=True)
-        # await get_relevant_tools(reranked_hits)
-        return SummarizedSearchResponse(summary=rerank_resp.parsed.summary, hits=reranked_hits)
-    except Exception as e:
-        logger.error(f"Reranking failed: {e}")
-        # Fallback: return results as-is without reranking
-        return SummarizedSearchResponse(
-            summary=f"Found {search_results.total_found} relevant datasets.",
-            hits=search_results.hits,
-        )
+        lines.append(f"   Description: {desc}\n")
+    return "\n".join(lines)
 
 
 @app.get("/conversations")

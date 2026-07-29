@@ -197,6 +197,23 @@ class SearchHit(BaseModel):
     # Precompute a few field values for easier access
     @computed_field
     @property
+    def dataset_url(self) -> str | None:
+        """Canonical URL identifying this dataset.
+
+        This is the citation key: the LLM is asked to cite a dataset as a plain Markdown link to
+        this URL, and the frontend resolves a link back to its result card by matching the href
+        against this value. A link that matches nothing still works as an ordinary external link,
+        so the answer stays valid in any Markdown client.
+        """
+        if self.source.doi:
+            doi = self.source.doi
+            return doi if doi.startswith("http") else f"https://doi.org/{doi.removeprefix('doi:')}"
+        if self.source.url:
+            return self.source.url
+        return self.id if self.id.startswith("http") else None
+
+    @computed_field
+    @property
     def title(self) -> str | None:
         """Get the first title, prioritizing English language titles."""
         titles = self.source.titles
@@ -294,15 +311,29 @@ class RankedHit(BaseModel):
     it can't mistype or omit a number the way it does long identifiers.
     """
 
-    index: int
-    score: float
+    index: int = Field(description="1-based position of the dataset in the numbered list shown above.")
+    score: float = Field(description="Relevance to the user question, from 0.0 (irrelevant) to 1.0 (highly relevant).")
 
 
 class RerankingOutput(BaseModel):
-    """Structured output from the LLM reranking step."""
+    """Structured output from the LLM reranking step.
 
-    summary: str
-    hits: list[RankedHit]
+    Field descriptions are part of the JSON schema sent to the model, so the formatting and scoring
+    rules live here (next to the fields) as well as in the system prompt.
+    """
+
+    summary: str = Field(
+        description=(
+            "Write the `summary` as a markdown bullet list for the actually relevant results, with a short one sentence summary at the start"
+            "Begin each bullet with the dataset's citation, then a short specific note on how it relates to the question, e.g.: - [1] tracks co2 over time"
+            "Only include the relevant datasets (skip clearly irrelevant ones), group near-duplicates into one bullet, and do not repeat information."
+            "Refer to a dataset using its number in square brackets: use only the numbers shown before each result, cite each"
+            "dataset separately like [1][2] (never grouped like [1, 2]), and never invent a number or write a Markdown/URL link."
+        )
+    )
+    hits: list[RankedHit] = Field(
+        description="A score for EVERY result provided, including near-duplicates - do not omit any result."
+    )
 
 
 class RerankingOutputResponse(BaseModel):
