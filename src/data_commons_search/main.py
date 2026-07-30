@@ -21,7 +21,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from fastapi import Body, Depends, FastAPI, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from langchain.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -54,7 +54,7 @@ from data_commons_search.db import (
     store_messages,
 )
 from data_commons_search.logging import BLUE, BOLD, RESET, setup_logging
-from data_commons_search.mcp_server import mcp
+from data_commons_search.mcp_server import mcp, search_data, search_tools
 from data_commons_search.models import (
     AgentInput,
     ConversationDetail,
@@ -62,6 +62,7 @@ from data_commons_search.models import (
     DbStats,
     LangChainResponseMetadata,
     MessageItem,
+    ResourceKind,
     SearchResults,
     TextPart,
     TokenUsageMetadata,
@@ -666,6 +667,27 @@ async def delete_conversations_endpoint(
 ) -> None:
     """Delete one or more conversations by their thread IDs. Only deletes conversations owned by the authenticated user."""
     delete_conversations(user.sub, thread_ids)
+
+
+@app.get("/search")
+async def search_endpoint(
+    request: Request,
+    q: str = Query(..., description="Natural language search input"),
+    resource: ResourceKind = Query("datasets", description="What to search for"),
+    start_date: str | None = Query(None, description="Only for datasets: start date in yyyy-MM-dd"),
+    end_date: str | None = Query(None, description="Only for datasets: end date in yyyy-MM-dd"),
+    creator_name: str | None = Query(None, description="Only for datasets: creator name to filter by"),
+    user: UserInfo | None = Depends(optional_auth),
+) -> SearchResults:
+    """Search datasets or tools directly, without going through the chat agent.
+
+    Calls the very same functions as the `search_data` / `search_tools` MCP tools, so results are
+    identical to what the agent sees. The date and creator filters only apply to datasets.
+    """
+    await rate_limiter.check(request, user)
+    if resource == "tools":
+        return await search_tools(q)
+    return await search_data(q, start_date=start_date, end_date=end_date, creator_name=creator_name)
 
 
 @app.get("/stats")

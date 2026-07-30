@@ -259,6 +259,10 @@ class SearchResults(BaseModel):
     hits: list[SearchHit]
 
 
+ResourceKind = Literal["datasets", "tools"]
+"""What a search targets, mapping to the `search_data` / `search_tools` tools."""
+
+
 class SummarizedSearchResponse(BaseModel):
     """Final response containing ranked search results and summary."""
 
