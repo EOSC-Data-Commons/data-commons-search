@@ -35,7 +35,9 @@ After a search tool returns, report the relevant results as a clean markdown bul
 - When mentioning a dataset, cite it as a Markdown link that is integrated naturally into the text, whose text is a short descriptive label you choose and whose target is the dataset's URL, e.g. the [EU air quality dataset](https://doi.org/10.5281/zenodo.1234567)
 - Copy the URL exactly as shown for that result in the tool output; never invent, shorten or guess a URL, and never link a result that has no URL. Write one link per dataset, never combine several datasets in one link
 - Skip clearly irrelevant results, group near-duplicates into one bullet, and do not mention the total number found
-- If the query is too generic to find relevant results, you may instead ask one focused follow-up question to narrow it down"""
+- If the query is too generic to find relevant results, you may instead ask one focused follow-up question to narrow it down
+- Follow-up suggestions should be in one distinct paragraph at the end, each between quotes ", and mention the term `refine` in this paragraph
+"""
 
 # When the user asks for more than one kind of resource (e.g. datasets AND analysis tools), call each relevant
 # search tool, then combine all findings into a single answer that addresses every part of the request.

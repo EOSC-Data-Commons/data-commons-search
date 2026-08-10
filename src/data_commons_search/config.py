@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     filemetrix_api: str = "https://filemetrix.eosc-data-commons.dansdemo.nl/api/v1"
     tool_registry_api: str = "https://tools-registry.eosc-data-commons.eu/api/v1/tools"
 
+    # ZENODO FEDERATION - query Zenodo alongside our own index in `search_data`. Set
+    # zenodo_search_enabled=false to turn it off; see zenodo.py to remove it entirely.
+    zenodo_search_enabled: bool = True
+    # Zenodo hits appended after our own results. Their API caps `size` at 25.
+    zenodo_results_count: int = 10
+
     # OpenSearch settings
     opensearch_index: str = "test_datacite"
     # opensearch_index: str = "20260507_datacite"

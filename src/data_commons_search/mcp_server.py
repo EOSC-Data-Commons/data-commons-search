@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import json
-import time
 from typing import Any
 from urllib.parse import quote
 
@@ -18,7 +17,8 @@ from data_commons_search.models import (
     SearchResults,
     UserInfo,
 )
-from data_commons_search.utils import logger
+from data_commons_search.utils import Timer, logger, timed
+from data_commons_search.zenodo import merge_results, search_zenodo_datasets  # ZENODO FEDERATION
 
 # from fastembed.rerank.cross_encoder import TextCrossEncoder
 
@@ -71,6 +71,13 @@ async def search_data(
     user = _log_mcp_user()
     if user:
         logger.info(f"Tool call `search_data` by user '{user.preferred_username or user.sub}'")
+
+    # ZENODO FEDERATION - started first so it runs while we embed and query OpenSearch.
+    zenodo_task = (
+        asyncio.create_task(timed(search_zenodo_datasets(search_input, start_date, end_date, creator_name)))
+        if settings.zenodo_search_enabled
+        else None
+    )
 
     # Generate embedding for the query (blocking CPU work -> offload to a thread)
     embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
@@ -221,23 +228,24 @@ async def search_data(
     }
     # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
     logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
-    t_search_start = time.perf_counter()
-    try:
-        # Run the blocking OpenSearch call in a thread so it doesn't freeze the event loop
-        resp = await asyncio.to_thread(
-            lambda: opensearch_client.search(
-                index=settings.opensearch_index,
-                body=body,
-                # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies,
-                # so near-tied results don't flip between identical queries (primary/replica IDF divergence)
-                search_type="dfs_query_then_fetch",
-                preference="data-commons-search",
+    with Timer() as t_opensearch:
+        try:
+            # Run the blocking OpenSearch call in a thread so it doesn't freeze the event loop
+            resp = await asyncio.to_thread(
+                lambda: opensearch_client.search(
+                    index=settings.opensearch_index,
+                    body=body,
+                    # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies,
+                    # so near-tied results don't flip between identical queries (primary/replica IDF divergence)
+                    search_type="dfs_query_then_fetch",
+                    preference="data-commons-search",
+                )
             )
-        )
-    except Exception as e:
-        logger.error(f"OpenSearch query failed: {e}")
-        return SearchResults(total_found=0, hits=[])
-    t_search_elapsed = time.perf_counter() - t_search_start
+        except Exception as e:
+            logger.error(f"OpenSearch query failed: {e}")
+            # Degrade to no local hits rather than returning early, so a Zenodo result set still
+            # reaches the caller and its task is never left dangling.
+            resp = {}
     # Extract hits from OpenSearch response
     raw_hits = resp.get("hits", {}).get("hits", [])
 
@@ -256,7 +264,7 @@ async def search_data(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in raw_hits],
     )
-    logger.debug(f"search_data: OpenSearch (no rerank) took {t_search_elapsed * 1000:.1f} ms for {len(res.hits)} hits")
+    logger.debug(f"search_data: OpenSearch (no rerank) took {t_opensearch.ms:.1f} ms for {len(res.hits)} hits")
     logger.debug(
         "search_data candidates: "
         + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.opensearch_score:.3f}" for h in res.hits)
@@ -276,7 +284,7 @@ async def search_data(
     #         "top_n": 4
     #     }'
     # if res.hits:
-    #     t_rerank_start = time.perf_counter()
+    #   with Timer() as t_rerank:
     #     documents = []
     #     for hit in res.hits:
     #         title = hit.title if hit.title is not None else ""
@@ -297,11 +305,22 @@ async def search_data(
     #         hit.score = 1.0 / (1.0 + math.exp(-(score - mid) / temperature))
     #     reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
     #     res.hits = reranked
-    #     t_rerank_elapsed = time.perf_counter() - t_rerank_start
     #     logger.info(
-    #         f"search_data: cross-encoder rerank of top {len(res.hits)} took {t_rerank_elapsed * 1000:.1f} ms "
-    #         f"(total search+rerank: {(t_search_elapsed + t_rerank_elapsed) * 1000:.1f} ms)"
+    #         f"search_data: cross-encoder rerank of top {len(res.hits)} took {t_rerank.ms:.1f} ms "
+    #         f"(total search+rerank: {t_opensearch.ms + t_rerank.ms:.1f} ms)"
     #     )
+    # ZENODO FEDERATION - append the hits from the query started at the top of this function.
+    if zenodo_task is not None:
+        with Timer() as t_waited:
+            zenodo_res, zenodo_ms = await zenodo_task
+        # TIMING - comment out this one call to drop the Zenodo/OpenSearch latency comparison.
+        # The two queries run concurrently, so `waited` (idle time left once our own search is done)
+        # is what Zenodo actually costs a request; `zenodo` alone is just how slow their API was.
+        logger.debug(
+            f"search_data timing: opensearch {t_opensearch.ms:.0f} ms ({len(res.hits)} hits) | "
+            f"zenodo {zenodo_ms:.0f} ms ({len(zenodo_res.hits)} hits, waited {t_waited.ms:.0f} ms)"
+        )
+        res = merge_results(res, zenodo_res)
     return res
 
 

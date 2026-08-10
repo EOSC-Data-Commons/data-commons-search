@@ -3,8 +3,10 @@
 import logging
 import os
 import pathlib
-from collections.abc import Callable
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import TypeVar
 
 from langchain.chat_models import BaseChatModel, init_chat_model
 from langchain.messages import SystemMessage
@@ -20,6 +22,8 @@ from data_commons_search.config import settings
 # from langchain_litellm import ChatLiteLLM
 
 # Disable logger in your code with `logging.getLogger("data_commons_search").setLevel(logging.WARNING)`
+T = TypeVar("T")
+
 logger = logging.getLogger("data_commons_search")
 logger.setLevel(logging.INFO)
 # handler = logging.StreamHandler()
@@ -59,6 +63,37 @@ if settings.debug_enabled:
 #     logging.getLogger("httpx").setLevel(logging.WARNING)
 #     logging.getLogger("opensearch").setLevel(logging.WARNING)
 #     logging.getLogger("mcp").setLevel(logging.WARNING)
+
+
+class Timer:
+    """Measure the wall-clock duration of a block, in milliseconds.
+
+        with Timer() as t:
+            ...
+        logger.info(f"took {t.ms:.0f} ms")
+
+    Wall clock, so `await`ing inside the block measures elapsed real time, not CPU time.
+    """
+
+    ms: float = 0.0
+
+    def __enter__(self) -> "Timer":
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.ms = (time.perf_counter() - self._start) * 1000
+
+
+async def timed(coro: Awaitable[T]) -> tuple[T, float]:
+    """Await a coroutine and return `(result, elapsed_ms)`.
+
+    Useful for a task started with `asyncio.create_task`, where the duration has to be measured
+    inside the task: the caller only observes when it *finishes*, not how long it ran.
+    """
+    with Timer() as t:
+        res = await coro
+    return res, t.ms
 
 
 def sse(data: BaseModel) -> str:
