@@ -53,7 +53,6 @@ if settings.debug_enabled:
     logging.getLogger("uvicorn").setLevel(logging.INFO)
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
     logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-    logging.getLogger("opensearch").setLevel(logging.INFO)
     logging.getLogger("mcp").setLevel(logging.INFO)
 
 # if not settings.debug_enabled:

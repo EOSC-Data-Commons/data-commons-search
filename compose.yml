@@ -4,8 +4,6 @@ services:
     # image: ghcr.io/eosc-data-commons/data-commons-search:main
     ports:
       - "127.0.0.1:8000:8000"
-    environment:
-      - OPENSEARCH_URL=http://opensearch:9200
     env_file:
       - keys.env
     volumes:

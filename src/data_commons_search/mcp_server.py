@@ -1,14 +1,11 @@
 import argparse
 import asyncio
-import json
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastembed import TextEmbedding
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
-from opensearchpy import OpenSearch
 
 from data_commons_search.config import settings
 from data_commons_search.models import (
@@ -17,27 +14,20 @@ from data_commons_search.models import (
     SearchResults,
     UserInfo,
 )
+from data_commons_search.search import search_datasets
 from data_commons_search.utils import Timer, logger, timed
 from data_commons_search.zenodo import merge_results, search_zenodo_datasets  # ZENODO FEDERATION
-
-# from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
     name="EOSC Data Commons MCP",
     debug=settings.debug_enabled,
-    dependencies=["mcp", "httpx", "opensearch-py", "fastembed", "pydantic"],
+    dependencies=["mcp", "httpx", "sqlalchemy", "pydantic"],
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,
     stateless_http=True,
     streamable_http_path="/",
 )
-
-embedding_model = TextEmbedding(settings.embedding_model)
-# reranker_model = TextCrossEncoder(model_name=settings.reranker_model)
-opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
-
-RERANK_TOP_K = 30
 
 
 def _log_mcp_user() -> UserInfo | None:
@@ -48,9 +38,6 @@ def _log_mcp_user() -> UserInfo | None:
     """
     token = get_access_token()
     return getattr(token, "userinfo", None) if token else None
-
-
-# https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
 
 
 @mcp.tool()
@@ -66,258 +53,42 @@ async def search_data(
         creator_name: Optional creator name to filter by
 
     Returns:
-        Results from OpenSearch (total_found, hits[])
+        Hybrid search results from PostgreSQL (total_found, hits[])
     """
     user = _log_mcp_user()
     if user:
         logger.info(f"Tool call `search_data` by user '{user.preferred_username or user.sub}'")
 
-    # ZENODO FEDERATION - started first so it runs while we embed and query OpenSearch.
+    # ZENODO FEDERATION - started first so it runs while we embed the query and search postgres.
     zenodo_task = (
         asyncio.create_task(timed(search_zenodo_datasets(search_input, start_date, end_date, creator_name)))
         if settings.zenodo_search_enabled
         else None
     )
 
-    # Generate embedding for the query (blocking CPU work -> offload to a thread)
-    embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
-    # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
-
-    # Define filters
-    filters: list[dict[str, Any]] = [
-        # NOTE: Quality gate: only keep records that actually carry a description. We don't want that
-        # {"nested": {"path": "descriptions", "query": {"exists": {"field": "descriptions.description"}}}},
-        # TODO: latest indexing does not seems to include resourceTypeGeneral field
-        # {
-        #     "nested": {
-        #         "path": "types",
-        #         "query": {"term": {"types.resourceTypeGeneral": "Dataset"}},
-        #     }
-        # }
-    ]
-    # logger.info(
-    #     f'Tool call `search_data`: "{search_input}"',
-    #     extra={
-    #         # "tool": "search_data",
-    #         # "args": {
-    #         "query": search_input,
-    #         "start_date": start_date,
-    #         "end_date": end_date,
-    #         "creator_name": creator_name,
-    #         # }
-    #     },
-    # )
-
-    # Soft date handling: a requested range boosts in-range records instead of excluding out-of-range or
-    # undated ones. dates.date is usually the publication date, not the data's temporal coverage, so a hard
-    # filter wrongly drops relevant records (e.g. a 1960-2020 dataset published in 2023). Kept out of the
-    # hard `filters` list so it never removes records from either channel.
-    date_boost_clause: dict[str, Any] | None = None
-    if start_date or end_date:
-        date_range = {"format": "yyyy-MM-dd"}
-        if start_date:
-            date_range["gte"] = start_date
-        if end_date:
-            date_range["lte"] = end_date
-        date_boost_clause = {
-            "nested": {
-                "path": "dates",
-                "query": {"range": {"dates.date": date_range}},
-                "boost": settings.date_boost,
-            }
-        }
-
-    # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
-    if creator_name:
-        filters.append(
-            {"query_string": {"query": f"*{creator_name}*", "default_field": "_creator", "default_operator": "AND"}}
-            # {
-            #     "nested": {
-            #         "path": "creators",
-            #         "query": {
-            #             "wildcard": {
-            #                 "creators.creatorName": {
-            #                     "value": f"*{creator_name}*",
-            #                     "case_insensitive": True,
-            #                 }
-            #             }
-            #         },
-            #     }
-            # }
-        )
-
-    emb: dict[str, Any] = {
-        "vector": embedding.tolist(),
-        "k": settings.candidate_pool,
-    }
-    if filters:
-        emb["filter"] = {"bool": {"must": filters}}
-
-    keyword_query: dict[str, Any] = {
-        "multi_match": {
-            "query": search_input,
-            "fields": [
-                # "titles.title^2",
-                "titles.title",
-                "descriptions.description",
-                "subjects.subject",
-                # "subjects.subject^1.5",
-                # TODO: add more fields?
-            ],
-        }
-    }
-    # NOTE: the description penalty is applied after search on the final hit scores
-    # (see below). An in-query function_score is a no-op under the RRF pipeline, which is rank-based
-    # and discards score magnitude.
-    # Wrap the keyword query when we have hard filters (creator) and/or a soft date boost.
-    if filters or date_boost_clause:
-        bool_query: dict[str, Any] = {"must": [keyword_query]}
-        if filters:
-            bool_query["filter"] = filters
-        if date_boost_clause:
-            bool_query["should"] = [date_boost_clause]
-        keyword_query = {"bool": bool_query}
-
-    body = {
-        "size": settings.candidate_pool,
-        "_source": [
-            "titles",
-            "subjects",
-            "descriptions",
-            "url",
-            "doi",
-            "dates",
-            "publicationYear",
-            "creators",
-            "_harvest_url",
-            "_repo",
-        ],
-        "query": {
-            "hybrid": {
-                "queries": [
-                    {"knn": {"emb": emb}},
-                    keyword_query,
-                ],
-            }
-        },
-        # Inline search pipeline: min_max normalization makes the weights
-        # actually affect ranking (RRF is rank-based and ignores score magnitude)
-        "search_pipeline": {
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": {"technique": "min_max"},
-                        "combination": {
-                            "technique": "arithmetic_mean",
-                            "parameters": {"weights": settings.hybrid_weights},
-                        },
-                    }
-                }
-                ## RRF alternative
-                # {
-                #     "score-ranker-processor": {
-                #         "combination": {
-                #         "technique": "rrf",
-                #         "rank_constant": 40,
-                #         "parameters": { "weights": [0.4, 0.6] }
-                #         }
-                #     }
-                # }
-            ]
-        },
-    }
-    # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
-    logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
-    with Timer() as t_opensearch:
+    with Timer() as t_search:
         try:
-            # Run the blocking OpenSearch call in a thread so it doesn't freeze the event loop
-            resp = await asyncio.to_thread(
-                lambda: opensearch_client.search(
-                    index=settings.opensearch_index,
-                    body=body,
-                    # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies,
-                    # so near-tied results don't flip between identical queries (primary/replica IDF divergence)
-                    search_type="dfs_query_then_fetch",
-                    preference="data-commons-search",
-                )
-            )
+            res = await search_datasets(search_input, start_date, end_date, creator_name)
         except Exception as e:
-            logger.error(f"OpenSearch query failed: {e}")
+            logger.error(f"PostgreSQL hybrid search failed: {e}")
             # Degrade to no local hits rather than returning early, so a Zenodo result set still
             # reaches the caller and its task is never left dangling.
-            resp = {}
-    # Extract hits from OpenSearch response
-    raw_hits = resp.get("hits", {}).get("hits", [])
-
-    # Soft description penalty applied on the final score (works under any pipeline, incl. rank-based RRF
-    # which ignores in-query score tweaks): demote records without a description, then re-sort.
-    if settings.description_penalty < 1.0:
-        for hit in raw_hits:
-            descriptions = hit.get("_source", {}).get("descriptions") or []
-            has_desc = any(isinstance(d, dict) and d.get("description") for d in descriptions)
-            if not has_desc and hit.get("_score") is not None:
-                hit["_score"] *= settings.description_penalty
-        raw_hits = sorted(raw_hits, key=lambda h: h.get("_score") or 0.0, reverse=True)
-    # Trim the large candidate pool down to the number of results we actually return.
-    raw_hits = raw_hits[: settings.search_results_count]
-    res = SearchResults(
-        total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
-        hits=[SearchHit(**hit) for hit in raw_hits],
-    )
-    logger.debug(f"search_data: OpenSearch (no rerank) took {t_opensearch.ms:.1f} ms for {len(res.hits)} hits")
+            res = SearchResults(total_found=0, hits=[])
+    logger.debug(f"search_data: postgres hybrid search took {t_search.ms:.1f} ms for {len(res.hits)} hits")
     logger.debug(
         "search_data candidates: "
         + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.opensearch_score:.3f}" for h in res.hits)
     )
 
-    # # Cross-encoder reranking
-    # TODO: use
-    # curl -X POST https://llm.ai.e-infra.cz/v1/rerank \
-    #     -H "Content-Type: application/json" \
-    #     -H "Authorization: Bearer $CESNET_API_KEY" \
-    #     -d '{
-    #         "model": "qwen3-reranker-4b",
-    #         "query": "What is the capital of France?",
-    #         "documents": [
-    #             "Paris is the capital of France.", "Berlin is the capital of Germany.",
-    #         ],
-    #         "top_n": 4
-    #     }'
-    # if res.hits:
-    #   with Timer() as t_rerank:
-    #     documents = []
-    #     for hit in res.hits:
-    #         title = hit.title if hit.title is not None else ""
-    #         description = hit.description if hit.description is not None else ""
-    #         documents.append(f"{title}\n{description}".strip())
-    #     # scores = list(reranker_model.rerank(search_input, documents))
-    #     # for hit, score in zip(res.hits, scores, strict=True):
-    #     #     hit.score = float(score)
-    #     # reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
-    #     scores = [float(s) for s in reranker_model.rerank(search_input, documents)]
-    #     lo, hi = min(scores), max(scores)
-    #     # Sigmoid with temperature so extremes don't saturate to exactly 0 or 1.
-    #     # Temperature is derived from the observed range to keep the spread informative
-    #     # regardless of the model's logit magnitude.
-    #     mid = (hi + lo) / 2
-    #     temperature = max((hi - lo) / 8, 1e-6)
-    #     for hit, score in zip(res.hits, scores, strict=True):
-    #         hit.score = 1.0 / (1.0 + math.exp(-(score - mid) / temperature))
-    #     reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
-    #     res.hits = reranked
-    #     logger.info(
-    #         f"search_data: cross-encoder rerank of top {len(res.hits)} took {t_rerank.ms:.1f} ms "
-    #         f"(total search+rerank: {t_opensearch.ms + t_rerank.ms:.1f} ms)"
-    #     )
     # ZENODO FEDERATION - append the hits from the query started at the top of this function.
     if zenodo_task is not None:
         with Timer() as t_waited:
             zenodo_res, zenodo_ms = await zenodo_task
-        # TIMING - comment out this one call to drop the Zenodo/OpenSearch latency comparison.
+        # TIMING - comment out this one call to drop the Zenodo/postgres latency comparison.
         # The two queries run concurrently, so `waited` (idle time left once our own search is done)
         # is what Zenodo actually costs a request; `zenodo` alone is just how slow their API was.
         logger.debug(
-            f"search_data timing: opensearch {t_opensearch.ms:.0f} ms ({len(res.hits)} hits) | "
+            f"search_data timing: postgres {t_search.ms:.0f} ms ({len(res.hits)} hits) | "
             f"zenodo {zenodo_ms:.0f} ms ({len(zenodo_res.hits)} hits, waited {t_waited.ms:.0f} ms)"
         )
         res = merge_results(res, zenodo_res)

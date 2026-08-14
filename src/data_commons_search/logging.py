@@ -49,7 +49,7 @@ THEME = Theme({"log.time": "dim"})
 _RESERVED_ATTRS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "taskName", "color_message"}
 
 # Noisy third-party loggers kept at WARNING unless debugging.
-_LIBRARY_LOGGERS = ("httpx", "mcp", "opensearch")
+_LIBRARY_LOGGERS = ("httpx", "mcp", "sqlalchemy")
 
 # Strip ANSI color codes (e.g. from the startup banner) out of JSON messages.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")

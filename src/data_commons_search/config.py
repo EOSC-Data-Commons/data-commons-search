@@ -31,20 +31,25 @@ class Settings(BaseSettings):
     # Zenodo hits appended after our own results. Their API caps `size` at 25.
     zenodo_results_count: int = 10
 
-    # OpenSearch settings
-    opensearch_index: str = "test_datacite"
-    # opensearch_index: str = "20260507_datacite"
-    opensearch_url: str = "http://opensearch:9200"
+    # Hybrid search settings (PostgreSQL: pg_textsearch BM25 + pgvectorscale DiskANN)
     search_results_count: int = 20
-    # knn candidate pool retrieved and combined before trimming to search_results_count. Must be MUCH
-    # larger than search_results_count: a small pool drops relevant near-duplicates and makes min_max
-    # normalization swing wildly
+    # Candidate pool retrieved per channel and combined before trimming to search_results_count. Must
+    # be MUCH larger than search_results_count: a small pool drops relevant near-duplicates and makes
+    # min-max normalization swing wildly
     candidate_pool: int = 100
-    # Hybrid combination weights [knn (semantic), keyword (BM25)]
+    # Hybrid combination weights [semantic (vector), lexical (BM25)]
     hybrid_weights: list[float] = [0.6, 0.4]
-    # Small soft penalty (0..1) applied to the keyword score of records lacking a description
-    # description_penalty: float = 0.05
-    description_penalty: float = 0.1
+    # Name of the BM25 index on datasets.search_text, `to_bm25query()` takes it as an argument
+    bm25_index: str = "datasets_bm25_search_text_idx"
+    # Weight applied to the cosine similarity of each named embedding field, so that between two
+    # equally close chunks a title match outranks a description one
+    embedding_field_weights: dict[str, float] = {"title": 1.0, "description": 0.95, "keywords": 0.9}
+    # Soft penalty (0..1) on the final score of datasets with no description. Introduced against
+    # OpenSearch surfacing bare measurement titles ("CO2 20t") for a CO2 query, where 0.1 was
+    # effectively a filter. Postgres scores BM25 over the whole `search_text` rather than a
+    # title-weighted multi_match, so those titles no longer reach the top and the penalty only has
+    # to break ties: measured on the CO2 queries, 1.0 and 0.1 give the same top 10 bar one row.
+    description_penalty: float = 0.7
     # Boost (not hard filter) for records whose dates.date falls in a requested range
     # Boosting ranks in-range records higher while keeping undated/out-of-range ones available. <=1.0 effectively disables the boost
     date_boost: float = 2.0
@@ -59,14 +64,14 @@ class Settings(BaseSettings):
     # (generated offline by scripts/compute_stats.py).
     stats_top_subjects: int = 15
 
-    # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    embedding_dimensions: int = 384  # 60MB
-    # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 384
-    # sentence-transformers/paraphrase-multilingual-mpnet-base-v2 768
-    # embedding_model: str = "intfloat/multilingual-e5-large"
-    # embedding_dimensions: int = 1024  # 2.2GB
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-12-v2"
+    # Embeddings. MUST match what metadata-warehouse used to index (scripts/postgres_data/
+    # index_datasets.py), otherwise query and document vectors are not comparable.
+    embedding_api_url: str = "https://llm.ai.e-infra.cz/v1"
+    embedding_model: str = "nomic-embed-text-v2-moe"
+    embedding_dimensions: int = 768
+    # nomic models are trained with their own task prefixes, documents are indexed with
+    # `search_document: ` and queries must use `search_query: ` (the e5 family uses query:/passage:)
+    embedding_query_prefix: str = "search_query: "
     # reranker_url: str = "https://llm.ai.e-infra.cz/v1/rerank"
 
     # LLM providers API keys

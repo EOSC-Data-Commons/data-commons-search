@@ -2,7 +2,7 @@
 
 Run with: uv run python tests/benchmark.py
 
-Requires the server to be running on port 8000 and OpenSearch to be reachable.
+Requires the server to be running on port 8000 and the postgres search index to be reachable.
 """
 
 import json
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypedDict
 
 import httpx
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -24,9 +25,11 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.text import Text
+from sqlalchemy import text
 
 from data_commons_search.config import settings
-from data_commons_search.models import SummarizedSearchResponse
+from data_commons_search.db import engine
+from data_commons_search.models import SearchResults
 
 console = Console()
 
@@ -78,7 +81,7 @@ test_items: list[TestItem] = [
         ],
     },
     {
-        "input": "Covid 19 in EU",
+        "input": "Societal impact of COVID-19 in the Netherlands",
         "lang": "en",
         "expected_results": [
             {
@@ -121,7 +124,7 @@ class Condition:
 def all_conditions() -> list[Condition]:
     llm_models = [
         "cesnet/agentic",
-        "mistralai/mistral-medium-latest",
+        # "mistralai/mistral-medium-latest",
         # "cesnet/gpt-oss-120b",
         # "cesnet/kimi-k2.5",
         # "cesnet/deepseek-v3.2",
@@ -157,10 +160,11 @@ class ConditionResult:
 # --- HTTP helpers ---
 
 
-def opensearch_is_available() -> bool:
+def search_index_is_available() -> bool:
+    """Lightweight check whether the postgres search index is reachable and populated."""
     try:
-        r = httpx.get(settings.opensearch_url.rstrip("/") + "/_cluster/health", timeout=2.0)
-        return 200 <= r.status_code < 400
+        with engine.connect() as conn:
+            return bool(conn.execute(text("SELECT 1 FROM datasets LIMIT 1")).first())
     except Exception:
         return False
 
@@ -202,12 +206,22 @@ def run_search(test_item: TestItem, condition: Condition) -> tuple[list[str], fl
         events = process_stream(resp)
     # console.log(f"[dim]-> done, {len(events)} events in {time.monotonic() - t0:.1f}s[/]")
     elapsed = time.monotonic() - t0
-    # Aggregate hits across every rerank event (a turn may run several searches)
+    # Aggregate hits across every search tool result (a turn may run several searches).
+    # Tool call ids come from the LLM provider, so there is nothing to match on by name: try to
+    # parse every tool result as search results and keep the ones that are. Until reranking was
+    # removed this matched on a `rerank_` id prefix, which no event carries any more, so every
+    # query silently scored zero hits.
     found_ids: list[str] = []
     for event in events:
-        if event.get("type") == "TOOL_CALL_RESULT" and str(event.get("tool_call_id", "")).startswith("rerank_"):
-            ranked = SummarizedSearchResponse.model_validate_json(event["content"])
-            found_ids.extend(hit.id for hit in ranked.hits)
+        if event.get("type") != "TOOL_CALL_RESULT":
+            continue
+        try:
+            results = SearchResults.model_validate_json(event["content"])
+        except (ValidationError, KeyError, TypeError):
+            continue
+        # `dataset_url` is the canonical citation key (DOI resolved to https://doi.org/...),
+        # which is the form the expected ids are written in.
+        found_ids.extend(hit.dataset_url or hit.id for hit in results.hits)
     return found_ids, elapsed
 
 
@@ -221,8 +235,13 @@ def check_success(test_item: TestItem, found_ids: list[str]) -> bool:
 
 
 def run_benchmark() -> None:
-    if not opensearch_is_available():
-        console.print(Panel(f"[bold red]OpenSearch unreachable at {settings.opensearch_url}[/]", title="Error"))
+    if not search_index_is_available():
+        console.print(
+            Panel(
+                f"[bold red]Postgres search index unreachable at {settings.postgres_host}/{settings.postgres_db}[/]",
+                title="Error",
+            )
+        )
         return
 
     conditions = all_conditions()

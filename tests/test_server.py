@@ -6,9 +6,11 @@ from typing import Any
 import httpx
 import pytest
 from ag_ui.core import RunStartedEvent
+from sqlalchemy import text
 
 from data_commons_search import main
 from data_commons_search.config import settings
+from data_commons_search.db import engine
 from data_commons_search.models import AgentInput, SummarizedSearchResponse
 from tests.benchmark import TestItem, test_items
 
@@ -25,11 +27,11 @@ llm_models = [
 # But it does not seems to be in search index
 
 
-def opensearch_is_available() -> bool:
-    """Lightweight check whether an OpenSearch URL is reachable."""
+def search_index_is_available() -> bool:
+    """Lightweight check whether the postgres search index is reachable and populated."""
     try:
-        r = httpx.get(settings.opensearch_url.rstrip("/") + "/_cluster/health", timeout=1.0)
-        return 200 <= r.status_code < 400
+        with engine.connect() as conn:
+            return bool(conn.execute(text("SELECT 1 FROM datasets LIMIT 1")).first())
     except Exception:
         return False
 
@@ -37,8 +39,8 @@ def opensearch_is_available() -> bool:
 @pytest.mark.parametrize("test_item", test_items)
 @pytest.mark.parametrize("llm_model", llm_models)
 @pytest.mark.skipif(
-    not opensearch_is_available(),
-    reason=f"OpenSearch unreachable at {settings.opensearch_url}",
+    not search_index_is_available(),
+    reason=f"Postgres search index unreachable at {settings.postgres_host}/{settings.postgres_db}",
 )
 def test_app(test_item: TestItem, llm_model: str) -> None:
     for attempt in range(3):

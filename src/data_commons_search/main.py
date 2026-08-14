@@ -161,7 +161,7 @@ logger.info(f"""🔭 {BOLD}{BLUE}EOSC Data Commons Search API{RESET} · {BOLD}{s
 ⚡️ Streamable HTTP MCP server · {settings.server_url}/mcp
 🔓 Login · {settings.server_url}/auth/login
 🐘 PostgreSQL · {BOLD}{settings.postgres_host}{RESET}
-🔎 OpenSearch · {BOLD}{settings.opensearch_url}{RESET}""")
+🔎 Hybrid search · {BOLD}{settings.postgres_db}{RESET} · embeddings {BOLD}{settings.embedding_model}{RESET}""")
 
 
 @app.post("/chat")

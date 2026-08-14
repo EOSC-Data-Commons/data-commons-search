@@ -10,7 +10,7 @@ A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-proj
 
 The HTTP API comprises 2 main endpoints:
 
-- `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons OpenSearch service
+- `/mcp`: **MCP server** that searches for relevant data to answer a user question using hybrid search (BM25 + vector) over the EOSC Data Commons PostgreSQL database
   - Uses Streamable HTTP transport
   - Available tools:
     - [x] Search datasets
@@ -24,13 +24,102 @@ The HTTP API comprises 2 main endpoints:
 >
 > It can also be used just as a MCP server through the pip package.
 
+## 🔍 How the search works
+
+Everything lives in one PostgreSQL database. There is no separate search engine: the datasets, their
+text, and their embeddings sit in the same place, so a search can combine keyword matching, meaning
+matching, and ordinary SQL filters in a single query.
+
+### Two ways of matching, combined
+
+A user question is answered by two independent searches that run at the same time:
+
+| | what it is good at | what it misses |
+| --- | --- | --- |
+| **Keyword (BM25)** | exact terms, acronyms, identifiers, names, rare words | a question phrased differently from the metadata |
+| **Meaning (vector)** | paraphrases, related concepts, other languages | exact strings it has never seen |
+
+Each returns its 100 best candidates. Their scores are on incompatible scales, so each list is
+rescaled to 0-1 and the two are blended, currently **60% meaning / 40% keyword**. A dataset found by
+both channels beats one found by only one. The top 20 are returned.
+
+Two adjustments are applied afterwards: datasets with no description get a mild penalty (0.7), and results
+from [Zenodo](https://zenodo.org) are appended from a live API call made in parallel, since Zenodo is not in our index.
+
+### How embeddings are generated
+
+An embedding is a list of 768 numbers representing the meaning of a piece of text. Two texts about
+the same subject end up with similar numbers, even in different languages. Comparing a question to a
+dataset is then just arithmetic.
+
+We do **not** make one embedding per dataset. We make **named embeddings**: each metadata field is
+embedded separately and keeps its name, so the search knows whether a match came from the title or
+from deep inside a description. Three fields are embedded, with a cap on how many pieces each may be
+split into:
+
+| field | max chunks | why that cap |
+| --- | --- | --- |
+| `title` | 1 | short by nature, always fits |
+| `keywords` | 2 | a truncated keyword list stays representative |
+| `description` | 8 | truncating a description loses real content |
+
+Text longer than one chunk is split on word boundaries at **1200 characters**. That limit comes from
+the model's 512-token window: Latin text runs about 4 characters per token, so 1200 leaves margin.
+Scripts like Chinese or Japanese are closer to 1 character per token, so a batch rejected for
+exceeding the window is retried at 400 characters, which always fits.
+
+In practice, over the 388,749 indexed datasets:
+
+- **1,077,764 embeddings**, on average **2.77 per dataset**
+- every dataset has a title embedding; 59% have at least one description embedding; 97% have keywords
+- descriptions average 579 characters per chunk, keywords 97, titles 51
+
+A dataset matches on its **best-scoring chunk**, not an average, so one strongly relevant paragraph
+buried in a long description is enough to surface it. Titles are weighted slightly above
+descriptions, so between two equally close matches the title one wins.
+
+### Technical specifics
+
+- **Model**: `nomic-embed-text-v2-moe` served by [e-infra CZ](https://e-infra.cz), 768 dimensions,
+  cosine distance. It is multilingual, which matters because a researcher may type in their own
+  language against metadata that is overwhelmingly English.
+- **Asymmetric prefixes**: documents are embedded with `search_document: ` and queries with
+  `search_query: `. This is what the model was trained on. A mismatch does not raise an error, it
+  just quietly degrades every result, which is why both sides are pinned in configuration.
+- **Extensions**: [`pg_textsearch`](https://github.com/timescale/pg_textsearch) provides BM25 ranking, [`pgvectorscale`](https://github.com/timescale/pgvectorscale) provides the StreamingDiskANN vector index. Both from Timescale, so no extra vendor.
+- **Filtered vector search**: each embedding row carries a label derived from its field name
+  (`title` → 1, `description` → 2, `keywords` → 3). The vector index is scanned once per field using
+  that label, rather than once globally, because description chunks vastly outnumber the others and
+  would otherwise fill the entire candidate pool on their own.
+- **Indexing** is incremental and resumable, and lives in the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse) repo (`scripts/postgres_data/index_datasets.py`). Identical texts are embedded once and reused: about a quarter of all chunks are exact duplicates, mostly boilerplate descriptions and shared keyword lists within a repository.
+
+Tuning knobs (`src/data_commons_search/config.py`): `hybrid_weights`, `candidate_pool`,
+`search_results_count`, `embedding_field_weights`, `description_penalty`.
+
+> [!NOTE]
+>
+> **Dates are currently ignored in ranking.** The LLM still extracts a date range from the question,
+> but the only date we index is the *publication* date, while users are almost always asking about
+> the period the data *covers*. A dataset spanning 1960-2020 published in 2023 answers the question
+> and fails the filter. Re-enabling this needs a temporal coverage field in the index, not a change
+> in the search code.
+
+> [!WARNING]
+>
+> **Known issue, under investigation.** The CESNET embeddings endpoint returns inconsistent vectors
+> for large request batches: two identical requests of 64+ texts return different results, while
+> batches of 16 or fewer are stable and reproducible. The current index was built with batches of
+> 1024, and only about 1 in 20 sampled stored vectors matches a fresh single-text re-embedding of its
+> own text. Retrieval quality does not appear as degraded as that suggests, so the practical impact
+> is not yet established. Query embedding is unaffected, as queries are embedded one at a time.
+
 ## 🔌 Connect to the MCP server
 
 The system can be used directly as a MCP server using either STDIO, or Streamable HTTP transport.
 
 > [!WARNING]
 >
-> You will need access to a pre-indexed OpenSearch instance for the MCP server to work.
+> You will need access to a pre-indexed PostgreSQL database (the `datasets` and `dataset_embeddings` tables of `appdb`, indexed by the metadata-warehouse) for the MCP server to work.
 
 Follow the instructions of your client, and use the `/mcp` URL of the public server: https://matchmaker.eosc-data-commons.eu/api/search/mcp
 
@@ -61,7 +150,7 @@ Your VSCode `mcp.json` should look like:
 > Requirements:
 >
 > - [x] [`uv`](https://docs.astral.sh/uv/getting-started/installation/), to easily handle scripts and virtual environments
-> - [x] [docker](https://docs.docker.com/get-started/get-docker/), to deploy the database and OpenSearch service
+> - [x] [docker](https://docs.docker.com/get-started/get-docker/), to deploy the PostgreSQL database
 > - [x] API key for a LLM provider: [e-infra CZ](https://chat.ai.e-infra.cz/), [Mistral.ai](https://console.mistral.ai/api-keys), or [OpenRouter](https://openrouter.ai/)
 >
 
@@ -94,13 +183,11 @@ POSTGRES_PASSWORD=app_password
 RATE_LIMITING_ENABLED=False
 LOG_LEVEL=DEBUG
 LOG_JSON=false
-
-OPENSEARCH_URL=http://localhost:9200
 ```
 
 ### 💾 Database
 
-The search system needs to connect to a PostgreSQL database to store authenticated users conversations.
+The search system needs to connect to a PostgreSQL database, both for the indexed datasets it searches (`datasets` and `dataset_embeddings`, hybrid search with pgvectorscale and pg_textsearch) and to store authenticated users conversations.
 
 Deploy and initialize the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse), in these instructions we expect the `metadata-warehouse` folder to be alongside the `data-commons-search`,in the same folder.
 
@@ -137,18 +224,16 @@ uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/c
 
 ### ⚡️ Start dev server
 
-Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
+Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running PostgreSQL instance:
 
 ```sh
 uv run --all-extras uvicorn src.data_commons_search.main:app --reload
 ```
 
-> Default `OPENSEARCH_URL=http://localhost:9200`
-
 Customize server port through environment variable:
 
 ```sh
-OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --reload
+SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 > [!NOTE]
@@ -233,7 +318,6 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      OPENSEARCH_URL: "http://opensearch:9200"
       CESNET_API_KEY: "${CESNET_API_KEY}"
 ```
 
