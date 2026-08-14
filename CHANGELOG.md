@@ -1,13 +1,30 @@
 # 🪵 Changelog
 
+## [0.10.0](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.14..v0.10.0) - 2026-08-14
 
+### ⚙️ Continuous Integration
+
+- Enable to bump to a given version - ([4077002](https://github.com/EOSC-Data-Commons/data-commons-search/commit/4077002d949d74aa74ddf12befaa07ff2f2c4940))
+
+### ⛰️ Features
+
+- Remove reranking, now whatever tool call happens we always just summarize with regular streamed LLM call - ([07e2997](https://github.com/EOSC-Data-Commons/data-commons-search/commit/07e2997c8f9a446cbb0f2288b459d5c485be5ad8))
+- Add `/search` API endpoint for simple datasets/tools search without LLM involved - ([8e5f11f](https://github.com/EOSC-Data-Commons/data-commons-search/commit/8e5f11fb05bfdce4facdfbaaadaf5c7b43e416a9))
+- Add Zenodo datasets search - ([5c47530](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5c4753090ab412d76d9ed4ce26792a90e7151529))
+
+### 🐛 Bug Fixes
+
+- Improve system prompt - ([c5b5f74](https://github.com/EOSC-Data-Commons/data-commons-search/commit/c5b5f74e60cc0da305c7e03e5e8e7fe6e7e17e67))
+
+### 🛠️ Miscellaneous Tasks
+
+- Update CHANGELOG for version 0.7.14 with new features and bug fixes - ([353e123](https://github.com/EOSC-Data-Commons/data-commons-search/commit/353e123362e150d76b7c972d5ecd67655295f0dc))
 
 ## [0.7.14](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.13..v0.7.14) - 2026-07-20
 
 ### ⛰️ Features
 
 - Implement timeouts for LLM generation and tool calls to prevent hanging streams - ([26c3f06](https://github.com/EOSC-Data-Commons/data-commons-search/commit/26c3f06b4828fa94d41485aff8a3dc4c3f147913))
-- Adding blablador as a provider - ([d8d7b88](https://github.com/EOSC-Data-Commons/data-commons-search/commit/d8d7b88eadf3db0e40caff160e1ba3721c10d0ca))
 
 ### 🐛 Bug Fixes
 
@@ -15,36 +32,11 @@
 
 ## [0.7.13](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.12..v0.7.13) - 2026-07-01
 
-### 🐛 Bug Fixes
-
-- Exclude the `dev` dependency group (`garak`, which pulls in `torch` and the full CUDA/nvidia stack) from the Docker image, and stop the container entrypoint from calling `uv run` (which silently re-synced and reinstalled those dev-only dependencies on every container start). Reduces the production image from ~9GB to ~760MB - ([60dd940](https://github.com/EOSC-Data-Commons/data-commons-search/commit/60dd9408da61f965ad1df8acdd15b88a0b5ad3bb))
-
 ## [0.7.12](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.11..v0.7.12) - 2026-07-01
-
-### 🐛 Bug Fixes
-
-- Update default LLM model, fallback logic, and error handling - ([c96daa8](https://github.com/EOSC-Data-Commons/data-commons-search/commit/c96daa8cf3a7ea539ba9d0068b53047198484823))
-
-### 🧪 Testing
-
-- Update default model to `cesnet/agentic` across documentation and tests - ([5c90ad6](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5c90ad6021e03b86aa87879eec822abad63ef4ab))
 
 ## [0.7.11](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.10..v0.7.11) - 2026-06-26
 
-### 🐛 Bug Fixes
-
-- Update `filemetrix` and `tool-registry` API URLs to their production endpoints - ([deaebbd](https://github.com/EOSC-Data-Commons/data-commons-search/commit/deaebbd55cf1d73a52b4c819c5c2f8993fdaf59d))
-- Enable `root_path` configuration for reverse proxy support in `config.py` and `main.py` - ([5ba3208](https://github.com/EOSC-Data-Commons/data-commons-search/commit/5ba3208c4c5f51919fcf8a62a31779ff92e1f931))
-
-### 🛠️ Miscellaneous Tasks
-
-- Update stats.json - ([fa3b7d1](https://github.com/EOSC-Data-Commons/data-commons-search/commit/fa3b7d1e5568aaa6876a4d182a4e9cf6cf9c0328))
-
 ## [0.7.10](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.9..v0.7.10) - 2026-06-26
-
-### 🐛 Bug Fixes
-
-- Add missing `offline_access` scope to the OIDC authorization request so refresh tokens are actually issued - ([a1282ee](https://github.com/EOSC-Data-Commons/data-commons-search/commit/a1282ee8bc648ab0dda01d4e805005fd1023077d))
 
 ## [0.7.9](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.8..v0.7.9) - 2026-06-25
 
