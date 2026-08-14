@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Validate version bump type
+# Validate version bump type, or an explicit version like 0.10.0 (to sync with the frontend version)
 BUMP_TYPE=$1
-if [ -z "$BUMP_TYPE" ] || { [ "$BUMP_TYPE" != "fix" ] && [ "$BUMP_TYPE" != "minor" ] && [ "$BUMP_TYPE" != "major" ]; }; then
-    echo "Error: Version bump type is required and must be one of: fix, minor, major"
-    echo "Usage: $0 <fix|minor|major>"
+if [ -z "$BUMP_TYPE" ] || { [ "$BUMP_TYPE" != "fix" ] && [ "$BUMP_TYPE" != "minor" ] && [ "$BUMP_TYPE" != "major" ] && ! echo "$BUMP_TYPE" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }; then
+    echo "Error: Version bump type is required and must be one of: fix, minor, major, or an explicit version (e.g. 0.10.0)"
+    echo "Usage: $0 <fix|minor|major|X.Y.Z>"
     exit 1
 fi
 

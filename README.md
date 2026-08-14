@@ -321,6 +321,12 @@ Run the release script providing the version bump: `fix`, `minor`, or `major`
 .github/release.sh fix
 ```
 
+Or an explicit version, e.g. to align with the frontend version:
+
+```sh
+.github/release.sh 0.10.0
+```
+
 > This will create a git tag, github release, and publish a docker image
 
 ## 🤝 Acknowledments
