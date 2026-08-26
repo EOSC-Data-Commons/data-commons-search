@@ -304,7 +304,7 @@ uv cache clean
 Pre-compute stats for the datasets in the db to `src/data_commons_search/stats.json`:
 
 ```sh
-POSTGRES_DB=datasetdb uv run scripts/compute_stats.py
+uv run --env-file prod.env scripts/compute_stats.py
 ```
 
 Update dependencies in `pyproject.toml`:
