@@ -167,8 +167,7 @@ class Vector(UserDefinedType):
 DATASET_EMBEDDING_FIELDS = ("title", "description", "keywords")
 DATASET_EMBEDDING_FIELD_ENUM = "dataset_embedding_field"
 # Dimensions of the indexed vectors. Must match EMBEDDING_MODEL.dims in index_datasets.py
-# (nomic-embed-text-v2-moe, 768). Switching model means changing this and regenerating every
-# vector: embeddings from two different models are not comparable.
+# (nomic-embed-text-v2-moe, 768). Switching model means regenerating every vector
 EMBEDDING_DIMS = 768
 
 # `labels` is generated from `field` so the two can never drift. pgvectorscale filters on
@@ -294,11 +293,6 @@ class DatasetEmbedding(SearchBase):
     )
 
 
-# -------------------------------------------------------------------------------------
-# Search indexes. index_datasets.py parses the generated indexes.sql to know which indexes
-# to drop before a bulk load and rebuild after it, so every one of them must be declared here.
-# -------------------------------------------------------------------------------------
-
 # Lexical search (pg_textsearch, BM25). Query with:
 #   ORDER BY search_text <@> 'user query' LIMIT 10
 # Scores are negative, so lower is a better match (ascending index scan).
@@ -321,10 +315,7 @@ Index(
 # filtering after the scan:
 #   WHERE labels && ARRAY[1]::SMALLINT[] ORDER BY embedding <=> $query LIMIT 10
 # Cosine distance, to match the normalized embeddings returned by the Cesnet API.
-#
-# IMPORTANT for bulk loads: build this index AFTER the rows are inserted. A graph filled one
-# insert at a time is slower to produce and gives worse recall than one built in a single pass
-# over the finished table. index_datasets.py --defer-indexes does this automatically.
+# IMPORTANT for bulk loads: build this index AFTER the rows are inserted
 Index(
     "dataset_embeddings_diskann_idx",
     DatasetEmbedding.__table__.c.embedding,
