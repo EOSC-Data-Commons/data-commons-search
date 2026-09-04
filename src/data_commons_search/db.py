@@ -253,17 +253,22 @@ class Dataset(SearchBase):
     indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
-class DatasetEmbedding(SearchBase):
-    """Named embeddings, one row per (dataset, field, chunk).
+class RecordEmbedding(SearchBase):
+    """Named embeddings, one row per (record, field, chunk).
 
     Fields that fit in a single vector (title, keywords) get a single chunk 0, long fields
-    (description) are split into several chunks.
+    (description) are split into several chunks. Named for records rather than datasets because
+    the same named-embedding layout is meant to carry tools and files too; the foreign key on
+    `record_url` is the one piece that still ties a row to `datasets` (see the note on it).
     """
 
-    __tablename__ = "dataset_embeddings"
-    __table_args__ = ({"comment": "Named embeddings per dataset, several chunks per field when the text is too long"},)
+    __tablename__ = "record_embeddings"
+    __table_args__ = ({"comment": "Named embeddings per record, several chunks per field when the text is too long"},)
 
-    dataset_url: Mapped[str] = mapped_column(
+    # TODO: Adding tools and files means dropping this foreign key (a row
+    # cannot reference several parent tables) and adding a record type discriminator, or pointing
+    # it at a shared `records` table. Renaming the table does not by itself make that possible.
+    record_url: Mapped[str] = mapped_column(
         String(2048),
         ForeignKey("datasets.url", ondelete="CASCADE"),
         primary_key=True,
@@ -317,9 +322,9 @@ Index(
 # Cosine distance, to match the normalized embeddings returned by the Cesnet API.
 # IMPORTANT for bulk loads: build this index AFTER the rows are inserted
 Index(
-    "dataset_embeddings_diskann_idx",
-    DatasetEmbedding.__table__.c.embedding,
-    DatasetEmbedding.__table__.c.labels,
+    "record_embeddings_diskann_idx",
+    RecordEmbedding.__table__.c.embedding,
+    RecordEmbedding.__table__.c.labels,
     postgresql_using="diskann",
     postgresql_ops={"embedding": "vector_cosine_ops"},
 )

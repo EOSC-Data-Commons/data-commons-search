@@ -4,7 +4,7 @@ Replaces the OpenSearch index. Two retrieval channels run in a single SQL statem
 combined in Python:
 
 - lexical: BM25 over `datasets.search_text` (`pg_textsearch`, the `<@>` operator)
-- semantic: cosine similarity over `dataset_embeddings` (`pgvectorscale`, StreamingDiskANN)
+- semantic: cosine similarity over `record_embeddings` (`pgvectorscale`, StreamingDiskANN)
 
 The schema (tables, indexes, the `labels` mapping used to search one named embedding field at a
 time) lives in the metadata-warehouse repo, in `scripts/postgres_data/create_sql/appdb/`. The
@@ -26,7 +26,7 @@ from data_commons_search.db import engine
 from data_commons_search.models import SearchHit, SearchResults
 from data_commons_search.utils import logger
 
-# `dataset_embeddings.labels`, generated from the `field` column so a query can restrict the
+# `record_embeddings.labels`, generated from the `field` column so a query can restrict the
 # DiskANN scan to one named embedding. Keep in sync with the generated column in tables.sql.
 FIELD_LABELS: dict[str, int] = {"title": 1, "description": 2, "keywords": 3}
 
@@ -42,7 +42,8 @@ class QueryEmbedder:
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(
             base_url=settings.embedding_api_url,
-            headers={"Authorization": f"Bearer {settings.cesnet_api_key}"},
+            # FEDLLM_API_KEY is the key of the EGI endpoint embedding_api_url points at
+            headers={"Authorization": f"Bearer {settings.fedllm_api_key}"},
             timeout=httpx.Timeout(30.0, connect=10.0),
         )
 
@@ -81,8 +82,8 @@ def _semantic_branch() -> str:
         # S608 below: `weight` and `label` come from code-controlled config, never from the
         # request. Everything a user provides (query, vector, creator) goes in as a bind parameter.
         branch = f"""
-        (SELECT e.dataset_url, (1 - (e.embedding <=> :vector)) * {weight} AS similarity
-         FROM dataset_embeddings e
+        (SELECT e.record_url, (1 - (e.embedding <=> :vector)) * {weight} AS similarity
+         FROM record_embeddings e
          WHERE e.labels && ARRAY[{label}]::smallint[]
          ORDER BY e.embedding <=> :vector
          LIMIT :pool)"""  # noqa: S608
@@ -107,11 +108,11 @@ WITH lexical AS (
 semantic_chunks AS ({_semantic_branch()}
 ),
 semantic AS (
-    SELECT sc.dataset_url AS url, max(sc.similarity) AS score
+    SELECT sc.record_url AS url, max(sc.similarity) AS score
     FROM semantic_chunks sc
-    JOIN datasets d ON d.url = sc.dataset_url
+    JOIN datasets d ON d.url = sc.record_url
     {semantic_where}
-    GROUP BY sc.dataset_url
+    GROUP BY sc.record_url
 ),
 candidates AS (
     SELECT url FROM lexical

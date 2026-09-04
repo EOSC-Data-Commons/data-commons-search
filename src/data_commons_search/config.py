@@ -66,7 +66,10 @@ class Settings(BaseSettings):
 
     # Embeddings. MUST match what metadata-warehouse used to index (scripts/postgres_data/
     # index_datasets.py), otherwise query and document vectors are not comparable.
-    embedding_api_url: str = "https://llm.ai.e-infra.cz/v1"
+    # EGI rather than Cesnet: better rate limits, and no degradation above a small batch size
+    # (Cesnet returns wrong vectors past ~16 texts per request, which is why indexing verifies
+    # every Cesnet batch and can use batches of 64 against EGI).
+    embedding_api_url: str = "https://llm.ai.egi.eu/v1"
     embedding_model: str = "nomic-embed-text-v2-moe"
     embedding_dimensions: int = 768
     # nomic models are trained with their own task prefixes, documents are indexed with

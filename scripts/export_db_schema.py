@@ -97,7 +97,7 @@ def render_types() -> str:
 -- ============================================
 
 -- Named embeddings stored per dataset. The labels mapping generated in the
--- dataset_embeddings.labels column (tables.sql) is derived from the same list, so each value
+-- record_embeddings.labels column (tables.sql) is derived from the same list, so each value
 -- always gets its own label number.
 DO $$ BEGIN
     CREATE TYPE {DATASET_EMBEDDING_FIELD_ENUM} AS ENUM ({values});
