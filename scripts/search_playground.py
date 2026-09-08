@@ -20,7 +20,7 @@ from data_commons_search.mcp_server import search_data
 
 async def run(query: str, start: str | None, end: str | None, creator: str | None) -> None:
     print(f"OpenSearch: {settings.opensearch_url}")
-    res = await search_data(query, start_date=start, end_date=end, creator_name=creator)
+    res = await search_data([query], start_date=start, end_date=end, creator_name=creator)
 
     print(f"\n{'=' * 78}")
     print(f"  query : {query}")

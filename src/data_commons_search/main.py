@@ -672,7 +672,7 @@ async def delete_conversations_endpoint(
 @app.get("/search")
 async def search_endpoint(
     request: Request,
-    q: str = Query(..., description="Natural language search input"),
+    q: list[str] = Query(..., description="Natural language search input, repeat the param to search several terms"),
     resource: ResourceKind = Query("datasets", description="What to search for"),
     start_date: str | None = Query(None, description="Only for datasets: start date in yyyy-MM-dd"),
     end_date: str | None = Query(None, description="Only for datasets: end date in yyyy-MM-dd"),

@@ -53,25 +53,69 @@ def _log_mcp_user() -> UserInfo | None:
 # https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
 
 
+def _hit_key(hit: SearchHit) -> str:
+    """Identity of a hit when merging the result lists of several search terms."""
+    url = hit.dataset_url
+    return url.lower().replace("http://", "https://").rstrip("/") if url else hit.id
+
+
+def _interleave(result_sets: list[SearchResults]) -> SearchResults:
+    """Merge the results of several search terms into one ranked list.
+
+    Round-robin over the per-term lists (best hit of each term first, then second best, ...) rather
+    than sorting on score: each term is normalized independently, so scores are not comparable across
+    terms, but ranks are. Duplicates are dropped, keeping the highest-ranked occurrence.
+    """
+    if len(result_sets) == 1:
+        return result_sets[0]
+    seen: set[str] = set()
+    hits: list[SearchHit] = []
+    for rank in range(max((len(r.hits) for r in result_sets), default=0)):
+        for res in result_sets:
+            if rank >= len(res.hits):
+                continue
+            hit = res.hits[rank]
+            key = _hit_key(hit)
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(hit)
+    return SearchResults(total_found=sum(r.total_found for r in result_sets), hits=hits)
+
+
 @mcp.tool()
 async def search_data(
-    search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
+    search_input: list[str],
+    start_date: str | None = None,
+    end_date: str | None = None,
+    creator_name: str | None = None,
 ) -> SearchResults:
     """Search for datasets relevant to the user question.
 
     Args:
-        search_input: Natural language search input
+        search_input: List of natural language search inputs, all searched in one call
         start_date: Optional start date in yyyy-MM-dd
         end_date: Optional end date in yyyy-MM-dd
         creator_name: Optional creator name to filter by
 
     Returns:
-        Results from OpenSearch (total_found, hits[])
+        Results from OpenSearch (total_found, hits[]), merged across all search inputs
     """
     user = _log_mcp_user()
     if user:
         logger.info(f"Tool call `search_data` by user '{user.preferred_username or user.sub}'")
+    queries = [q for q in search_input if q and q.strip()]
+    if not queries:
+        return SearchResults(total_found=0, hits=[])
+    # Terms run concurrently, then the lists are merged into one ranking
+    results = await asyncio.gather(*(_search_data_one(q, start_date, end_date, creator_name) for q in queries))
+    return _interleave(list(results))
 
+
+async def _search_data_one(
+    search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
+) -> SearchResults:
+    """Run the hybrid dataset search for a single search term."""
     # ZENODO FEDERATION - started first so it runs while we embed and query OpenSearch.
     zenodo_task = (
         asyncio.create_task(timed(search_zenodo_datasets(search_input, start_date, end_date, creator_name)))
@@ -356,16 +400,25 @@ def _formats_to_list(value: Any) -> list[str]:
 
 
 @mcp.tool()
-async def search_tools(search_input: str) -> SearchResults:
+async def search_tools(search_input: list[str]) -> SearchResults:
     """Search for tools relevant to the user question
 
     Args:
-        search_input: search terms
+        search_input: List of search terms, all searched in one call
 
     Returns:
-        Search results with a list of tools relevant to the question
+        Search results with a list of tools relevant to the question, merged across all search terms
     """
     # _log_mcp_user()
+    queries = [q for q in search_input if q and q.strip()]
+    if not queries:
+        return SearchResults(total_found=0, hits=[])
+    results = await asyncio.gather(*(_search_tools_one(q) for q in queries))
+    return _interleave(list(results))
+
+
+async def _search_tools_one(search_input: str) -> SearchResults:
+    """Query the tool registry for a single search term."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
