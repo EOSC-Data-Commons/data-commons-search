@@ -28,17 +28,19 @@ class Settings(BaseSettings):
     # ZENODO FEDERATION - query Zenodo alongside our own index in `search_data`. Set
     # zenodo_search_enabled=false to turn it off; see zenodo.py to remove it entirely.
     zenodo_search_enabled: bool = True
-    # Zenodo hits appended after our own results. Their API caps `size` at 25.
-    zenodo_results_count: int = 10
+    # Optional Zenodo personal access token. Only raises our rate limit (their search needs no
+    # auth), so an empty value just means anonymous requests.
+    zenodo_api_key: str = ""
 
     # OpenSearch settings
     opensearch_index: str = "test_datacite"
     # opensearch_index: str = "20260507_datacite"
     opensearch_url: str = "http://opensearch:9200"
-    search_results_count: int = 20
-    # knn candidate pool retrieved and combined before trimming to search_results_count. Must be MUCH
-    # larger than search_results_count: a small pool drops relevant near-duplicates and makes min_max
-    # normalization swing wildly
+    # Default for the `limit` argument of the search MCP tools: how many results a tool returns, and
+    # how many each search input retrieves from our index and from Zenodo before reranking.
+    search_results_count: int = 10
+    # knn candidate pool retrieved and combined before trimming to the requested limit. Must be larger
+    # than that limit: a small pool drops relevant near-duplicates and makes min_max normalization swing
     candidate_pool: int = 100
     # Hybrid combination weights [knn (semantic), keyword (BM25)]
     hybrid_weights: list[float] = [0.6, 0.4]
@@ -66,8 +68,17 @@ class Settings(BaseSettings):
     # sentence-transformers/paraphrase-multilingual-mpnet-base-v2 768
     # embedding_model: str = "intfloat/multilingual-e5-large"
     # embedding_dimensions: int = 1024  # 2.2GB
-    reranker_model: str = "Xenova/ms-marco-MiniLM-L-12-v2"
-    # reranker_url: str = "https://llm.ai.e-infra.cz/v1/rerank"
+
+    # LiteLLM API used for embeddings (OpenAI-compatible /embeddings) and reranking (/rerank)
+    embed_api_url: str = "https://llm.ai.egi.eu/v1"
+    embed_api_key: str = ""
+    reranker_model: str = "qwen3-reranker-4b"
+    # Apply the Qwen3-Reranker prompt template to the /rerank query and documents ourselves, which
+    # the model needs and vLLM does not do. Off for a reranker that templates server-side
+    rerank_prompt_template: bool = True
+    embed_api_model: str = ""
+    # Task prefix the API model family expects on a query ("search_query: " for nomic, "query: " for e5)
+    embed_query_prefix: str = ""
 
     # LLM providers API keys
     default_llm_model: str = "cesnet/agentic"

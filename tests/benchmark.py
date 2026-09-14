@@ -6,6 +6,7 @@ Requires the server to be running on port 8000 and OpenSearch to be reachable.
 """
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, TypedDict
@@ -26,7 +27,6 @@ from rich.table import Table
 from rich.text import Text
 
 from data_commons_search.config import settings
-from data_commons_search.models import SummarizedSearchResponse
 
 console = Console()
 
@@ -121,7 +121,7 @@ class Condition:
 def all_conditions() -> list[Condition]:
     llm_models = [
         "cesnet/agentic",
-        "mistralai/mistral-medium-latest",
+        # "mistralai/mistral-medium-latest",
         # "cesnet/gpt-oss-120b",
         # "cesnet/kimi-k2.5",
         # "cesnet/deepseek-v3.2",
@@ -179,8 +179,34 @@ def process_stream(resp: httpx.Response) -> list[Any]:
     return events
 
 
+URL_PATTERN = re.compile(r"https?://[^\s<>\"\'\)\]]+")
+
+
+def normalize_url(url: str) -> str:
+    """Comparable form of a dataset URL: same scheme, case and trailing slash on both sides."""
+    return url.lower().replace("http://", "https://").rstrip("/")
+
+
+def extract_urls(text: str) -> list[str]:
+    """Dataset links the assistant put in its answer, deduplicated, in order of appearance.
+
+    What the answer cites is what the user actually gets, so that is what we score: a dataset the
+    search returned but the model dropped from its answer is not a hit.
+    """
+    urls: list[str] = []
+    seen: set[str] = set()
+    for raw in URL_PATTERN.findall(text):
+        # Trailing punctuation of the sentence, not of the URL
+        url = normalize_url(raw.rstrip(".,;:!?"))
+        if url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    return urls
+
+
 def run_search(test_item: TestItem, condition: Condition) -> tuple[list[str], float]:
-    """Run one search query. Returns (found_ids, elapsed_seconds)."""
+    """Run one search query. Returns (dataset URLs cited in the answer, elapsed_seconds)."""
     payload = {
         "items": [{"type": "message", "role": "user", "content": [{"text": test_item["input"]}]}],
         "model": condition.llm_model,
@@ -202,18 +228,14 @@ def run_search(test_item: TestItem, condition: Condition) -> tuple[list[str], fl
         events = process_stream(resp)
     # console.log(f"[dim]-> done, {len(events)} events in {time.monotonic() - t0:.1f}s[/]")
     elapsed = time.monotonic() - t0
-    # Aggregate hits across every rerank event (a turn may run several searches)
-    found_ids: list[str] = []
-    for event in events:
-        if event.get("type") == "TOOL_CALL_RESULT" and str(event.get("tool_call_id", "")).startswith("rerank_"):
-            ranked = SummarizedSearchResponse.model_validate_json(event["content"])
-            found_ids.extend(hit.id for hit in ranked.hits)
-    return found_ids, elapsed
+    # The answer is streamed as text chunks, possibly over several assistant messages in one turn
+    answer = "".join(e.get("delta") or "" for e in events if e.get("type") == "TEXT_MESSAGE_CHUNK")
+    return extract_urls(answer), elapsed
 
 
 def check_success(test_item: TestItem, found_ids: list[str]) -> bool:
-    """Return True if all expected IDs appear somewhere in the result list."""
-    expected_ids = {r["id"] for r in test_item["expected_results"]}
+    """Return True if every expected dataset is linked in the answer."""
+    expected_ids = {normalize_url(r["id"]) for r in test_item["expected_results"]}
     return expected_ids.issubset(set(found_ids))
 
 
@@ -272,7 +294,7 @@ def run_benchmark() -> None:
                         status_str = "[green]OK[/]"
                         note = ""
                     else:
-                        expected = {r["id"] for r in item["expected_results"]}
+                        expected = {normalize_url(r["id"]) for r in item["expected_results"]}
                         missing = expected - set(found_ids)
                         status_str = "[yellow]MISS[/]"
                         retrieved = ", ".join(found_ids) if found_ids else "[]"

@@ -208,13 +208,6 @@ def get_timestamp() -> int:
     # return int(datetime.now(timezone.utc).timestamp())
 
 
-def _truncate_hits(data: Any, limit: int = 10) -> Any:
-    """If the payload looks like a search result with a `hits` list, cap it to `limit`."""
-    if isinstance(data, dict) and isinstance(data.get("hits"), list) and len(data["hits"]) > limit:
-        return {**data, "hits": data["hits"][:limit]}
-    return data
-
-
 def _parse_tool_result(res: Any) -> tuple[Any, str]:
     """Extract `(parsed_json_or_none, raw_text)` from an MCP tool call result."""
     if res.structuredContent:
@@ -555,9 +548,7 @@ async def stream_chat_response(
                         else:
                             # Non-search tool (or empty results): end normally and feed the raw result back.
                             yield conv.end_tool_call(tool_call_id, tool_call_name, msg_id, tool_results_str)
-                            lc_history_str = (
-                                json.dumps(_truncate_hits(parsed)) if parsed is not None else tool_results_str
-                            )
+                            lc_history_str = json.dumps(parsed) if parsed is not None else tool_results_str
                             lc_msgs.append(ToolMessage(content=lc_history_str or "(empty)", tool_call_id=tool_call_id))
             yield sse(RunFinishedEvent(thread_id=conv.thread_id, run_id=run_id, timestamp=get_timestamp()))
             langfuse.update_current_span(output={"text": final_text})
@@ -621,7 +612,7 @@ def _format_hits_for_llm(search_results: SearchResults) -> str:
         "descriptive label and the dataset's URL as the target, e.g. [Global Carbon Budget](https://doi.org/10.18160/GCP-2023). "
         "Copy each URL exactly as written below.\n"
     ]
-    for i, hit in enumerate(search_results.hits[: settings.search_results_count]):
+    for i, hit in enumerate(search_results.hits):
         lines.append(f"{i + 1}.")
         lines.append(f"   {' | '.join(title.title for title in hit.source.titles)}")
         lines.append(f"   URL: {hit.dataset_url or '(none - do not link this one)'}")
@@ -687,7 +678,9 @@ async def search_endpoint(
     await rate_limiter.check(request, user)
     if resource == "tools":
         return await search_tools(q)
-    return await search_data(q, start_date=start_date, end_date=end_date, creator_name=creator_name)
+    return await search_data(
+        q, user_question=" | ".join(q), start_date=start_date, end_date=end_date, creator_name=creator_name
+    )
 
 
 @app.get("/stats")

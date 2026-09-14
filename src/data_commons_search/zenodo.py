@@ -1,10 +1,7 @@
 """Zenodo search, federated into `search_data` at query time.
 
-Self-contained on purpose: this whole module plus the two call sites marked `ZENODO FEDERATION`
-in `mcp_server.py` are everything there is to remove if we drop federation (e.g. once Zenodo
-datasets are harvested into our own index instead).
-
-Zenodo's own search is lexical, so it is queried with the raw user text. Its API caps `size` at 25
+Their hits are merged with ours and reranked there,
+alongside every other result list. Zenodo's own search is lexical, so it is queried with the raw user text. Its API caps `size` at 25
 and its rate limit is 30 requests/min for the whole service (see `x-ratelimit-*` response headers),
 so failures here are expected and always degrade to "no Zenodo results" rather than to an error.
 """
@@ -22,7 +19,9 @@ from data_commons_search.utils import logger
 
 ZENODO_API = "https://zenodo.org/api/records"
 ZENODO_REPO = "Zenodo"
-TIMEOUT_S = 8.0
+TIMEOUT_S = 12.0
+# Hard cap of their API on the number of results per page
+MAX_SIZE = 25
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
@@ -118,6 +117,7 @@ def _build_query(search_input: str, start_date: str | None, end_date: str | None
 
 async def search_zenodo_datasets(
     search_input: str,
+    limit: int = 10,
     start_date: str | None = None,
     end_date: str | None = None,
     creator_name: str | None = None,
@@ -131,16 +131,23 @@ async def search_zenodo_datasets(
     params = {
         "q": query,
         "resource_type": "dataset",
-        "size": str(settings.zenodo_results_count),
+        # Their API rejects a `size` above 25
+        "size": str(min(limit, MAX_SIZE)),
         "page": "1",
     }
+    headers = {"accept": "application/json"}
+    # Authenticate when a token is configured: the search endpoint is public, but an authenticated
+    # request gets a higher rate limit, which is the failure mode we actually hit.
+    if settings.zenodo_api_key:
+        headers["authorization"] = f"Bearer {settings.zenodo_api_key}"
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-            resp = await client.get(ZENODO_API, params=params, headers={"accept": "application/json"})
+            resp = await client.get(ZENODO_API, params=params, headers=headers)
             resp.raise_for_status()
             payload = resp.json()
     except Exception as e:
-        logger.warning(f"Zenodo search failed, continuing without it: {e}")
+        # A timeout stringifies to "", so log the class too or the reason is invisible
+        logger.warning(f"Zenodo search failed, continuing without it: {type(e).__name__} {e}")
         return SearchResults(total_found=0, hits=[])
 
     records = ((payload.get("hits") or {}).get("hits")) or []
@@ -148,25 +155,3 @@ async def search_zenodo_datasets(
     hits = [hit for rank, rec in enumerate(records) if (hit := _to_search_hit(rec, rank, total)) is not None]
     logger.debug(f"Zenodo search returned {len(hits)} hits for {query!r}")
     return SearchResults(total_found=int((payload.get("hits") or {}).get("total") or 0), hits=hits)
-
-
-def merge_results(ours: SearchResults, zenodo: SearchResults) -> SearchResults:
-    """Append Zenodo hits after ours, dropping any Zenodo hit we already have.
-
-    Deduplicated on `dataset_url` (the DOI URL for both sides). Our own entry always wins, since its
-    metadata is normalized to our schema and its score comes from our hybrid retrieval. No score
-    fusion or interleaving: the two score scales are not comparable, so the lists are concatenated.
-    """
-    seen = {url for hit in ours.hits if (url := _dedup_key(hit))}
-    extra = [hit for hit in zenodo.hits if (key := _dedup_key(hit)) is None or key not in seen]
-    if len(extra) != len(zenodo.hits):
-        logger.debug(f"Zenodo merge: dropped {len(zenodo.hits) - len(extra)} duplicate(s) already in our index")
-    return SearchResults(total_found=ours.total_found + zenodo.total_found, hits=[*ours.hits, *extra])
-
-
-def _dedup_key(hit: SearchHit) -> str | None:
-    """Normalized `dataset_url`, so `http`/`https` and case differences do not defeat dedup."""
-    url = hit.dataset_url
-    if not url:
-        return None
-    return url.lower().replace("http://", "https://").rstrip("/")

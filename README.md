@@ -82,6 +82,10 @@ Create a **`keys.env`** file with your LLM provider API key(s), and optionally o
 ```sh
 CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
+# Key for the LiteLLM API used to rerank search results
+EMBED_API_KEY=YOUR_API_KEY
+# Optional Zenodo personal access token, only raises the rate limit of the federated Zenodo search
+ZENODO_API_KEY=YOUR_API_KEY
 
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
@@ -215,6 +219,7 @@ Create a `keys.env` file with the API keys (see above for complete example):
 ```sh
 CESNET_API_KEY=YOUR_API_KEY
 MISTRAL_API_KEY=YOUR_API_KEY
+EMBED_API_KEY=YOUR_API_KEY
 SEARCH_API_KEY=SECRET_KEY_YOU_CAN_USE_IN_FRONTEND_TO_AVOID_SPAM
 ```
 
@@ -235,6 +240,7 @@ services:
     environment:
       OPENSEARCH_URL: "http://opensearch:9200"
       CESNET_API_KEY: "${CESNET_API_KEY}"
+      EMBED_API_KEY: "${EMBED_API_KEY}"
 ```
 
 Build and deploy the service:

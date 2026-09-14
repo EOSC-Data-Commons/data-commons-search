@@ -110,6 +110,11 @@ output-format = "full"
 [tool.ty.rules]
 unused-ignore-comment = "warn"
 
+[tool.mypy]
+# mypy cannot type a decorator stacked on @property (mypy#1362, open since 2016), so every
+# pydantic `@computed_field` + `@property` is flagged
+disable_error_code = ["prop-decorator"]
+
 
 [tool.ruff]
 target-version = "py310"

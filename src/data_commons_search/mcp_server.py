@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import json
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from fastembed import TextEmbedding
@@ -11,16 +10,10 @@ from mcp.server.fastmcp import FastMCP
 from opensearchpy import OpenSearch
 
 from data_commons_search.config import settings
-from data_commons_search.models import (
-    FileMetrixFilesResponse,
-    SearchHit,
-    SearchResults,
-    UserInfo,
-)
+from data_commons_search.embeddings import embed_texts, rerank
+from data_commons_search.models import SearchHit, SearchResults, UserInfo
 from data_commons_search.utils import Timer, logger, timed
-from data_commons_search.zenodo import merge_results, search_zenodo_datasets  # ZENODO FEDERATION
-
-# from fastembed.rerank.cross_encoder import TextCrossEncoder
+from data_commons_search.zenodo import search_zenodo_datasets
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -34,10 +27,10 @@ mcp = FastMCP(
 )
 
 embedding_model = TextEmbedding(settings.embedding_model)
-# reranker_model = TextCrossEncoder(model_name=settings.reranker_model)
-opensearch_client = OpenSearch(hosts=[settings.opensearch_url])
+opensearch_client = OpenSearch(hosts=[settings.opensearch_url], pool_maxsize=20)
 
-RERANK_TOP_K = 30
+# Guard rail on the `limit` a caller can ask a search tool for
+MAX_RESULTS_COUNT = 50
 
 
 def _log_mcp_user() -> UserInfo | None:
@@ -59,22 +52,17 @@ def _hit_key(hit: SearchHit) -> str:
     return url.lower().replace("http://", "https://").rstrip("/") if url else hit.id
 
 
-def _interleave(result_sets: list[SearchResults]) -> SearchResults:
-    """Merge the results of several search terms into one ranked list.
+def _merge_dedup(result_sets: list[SearchResults]) -> SearchResults:
+    """Concatenate one result list per search input and per backend into the pool to rerank, dropping repeats.
 
-    Round-robin over the per-term lists (best hit of each term first, then second best, ...) rather
-    than sorting on score: each term is normalized independently, so scores are not comparable across
-    terms, but ranks are. Duplicates are dropped, keeping the highest-ranked occurrence.
+    Order within the pool does not rank anything: the reranker scores every hit and decides the
+    output order. Duplicates keep their first occurrence, so our own entry wins over the same record
+    from Zenodo since our lists come first.
     """
-    if len(result_sets) == 1:
-        return result_sets[0]
     seen: set[str] = set()
     hits: list[SearchHit] = []
-    for rank in range(max((len(r.hits) for r in result_sets), default=0)):
-        for res in result_sets:
-            if rank >= len(res.hits):
-                continue
-            hit = res.hits[rank]
+    for res in result_sets:
+        for hit in res.hits:
             key = _hit_key(hit)
             if key in seen:
                 continue
@@ -83,9 +71,68 @@ def _interleave(result_sets: list[SearchResults]) -> SearchResults:
     return SearchResults(total_found=sum(r.total_found for r in result_sets), hits=hits)
 
 
+def _rerank_query(user_question: str, queries: list[str]) -> str:
+    """What to rerank against: the user's question, falling back to the search terms if it is blank.
+
+    `user_question` is a required tool argument, so the fallback only covers a caller that sends an
+    empty string rather than a real question.
+    """
+    return user_question.strip() or " | ".join(queries)
+
+
+async def _rerank_hits(
+    query: str, res: SearchResults, limit: int, timings: dict[str, float] | None = None
+) -> SearchResults:
+    """Score the merged hits with the cross-encoder and keep the best `limit` of them.
+
+    `query` is the user's own question, not the search terms derived from it: the terms are written
+    to cast a wide net for retrieval, while reranking is asked what actually answers the question.
+    One rerank call for the whole merged pool, so every hit gets a score on the same scale whichever
+    search input (and whichever backend) produced it. If the rerank API is unavailable we return the
+    head of the merged pool as-is, i.e. mostly the first search input's own top hits.
+    """
+    if not res.hits:
+        return res
+    documents = [f"{hit.title or ''}\n{hit.description or ''}".strip() for hit in res.hits]
+    with Timer() as t_rerank:
+        ranked = await rerank(query, documents, top_n=limit)
+    if timings is not None:
+        timings["rerank"] = t_rerank.ms
+    if ranked is None:
+        logger.warning(f"Reranking unavailable, returning the first {limit} merged hits")
+        return SearchResults(total_found=res.total_found, hits=res.hits[:limit])
+    hits = []
+    for idx, score in ranked[:limit]:
+        res.hits[idx].score = score
+        hits.append(res.hits[idx])
+    logger.debug(
+        f"rerank of {len(documents)} hits took {t_rerank.ms:.0f} ms, kept {len(hits)}: "
+        + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.score:.3f}" for h in hits)
+    )
+    return SearchResults(total_found=res.total_found, hits=hits)
+
+
+async def _embed_query(search_input: str) -> list[float]:
+    """Query vector: from the embeddings API when `embed_api_model` is set, else local fastembed.
+
+    The OpenSearch index holds vectors from the fastembed `embedding_model`, so switching to the API
+    needs the index re-embedded with the same model (and `embed_query_prefix` set for its family).
+    """
+    if settings.embed_api_model:
+        vectors = await embed_texts([f"{settings.embed_query_prefix}{search_input}"])
+        if vectors:
+            return vectors[0]
+        logger.warning("Embeddings API unavailable, falling back to the local fastembed model")
+    # Blocking CPU work -> offload to a thread
+    embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
+    return embedding.tolist()
+
+
 @mcp.tool()
 async def search_data(
     search_input: list[str],
+    user_question: str,
+    limit: int = settings.search_results_count,
     start_date: str | None = None,
     end_date: str | None = None,
     creator_name: str | None = None,
@@ -94,12 +141,15 @@ async def search_data(
 
     Args:
         search_input: List of natural language search inputs, all searched in one call
+        user_question: The user's question, copied as asked (only fix typos and make it standalone).
+            Used to rank the results
+        limit: Number of datasets to return
         start_date: Optional start date in yyyy-MM-dd
         end_date: Optional end date in yyyy-MM-dd
         creator_name: Optional creator name to filter by
 
     Returns:
-        Results from OpenSearch (total_found, hits[]), merged across all search inputs
+        The `limit` most relevant datasets (total_found, hits[]) across all search inputs
     """
     user = _log_mcp_user()
     if user:
@@ -107,25 +157,53 @@ async def search_data(
     queries = [q for q in search_input if q and q.strip()]
     if not queries:
         return SearchResults(total_found=0, hits=[])
-    # Terms run concurrently, then the lists are merged into one ranking
-    results = await asyncio.gather(*(_search_data_one(q, start_date, end_date, creator_name) for q in queries))
-    return _interleave(list(results))
+    limit = max(1, min(limit, MAX_RESULTS_COUNT))
+    # Per-stage durations filled in by the helpers below, then logged as one breakdown. Search inputs
+    # run concurrently, so each backend reports its slowest input: what that stage cost in wall clock.
+    timings: dict[str, float] = {}
+    with Timer() as t_total:
+        # Each input retrieves `limit` hits from our index plus `limit` from Zenodo, concurrently. All
+        # those lists are then merged into one deduplicated pool and reranked down to `limit` results.
+        results = await asyncio.gather(
+            *(_search_data_one(q, limit, start_date, end_date, creator_name, timings) for q in queries)
+        )
+        pool = _merge_dedup([res for per_input in results for res in per_input])
+        final = await _rerank_hits(_rerank_query(user_question, queries), pool, limit, timings)
+    logger.info(
+        f"`search_data` took {t_total.ms:.0f} ms for {len(queries)} search input(s), {len(final.hits)} hits: "
+        f"embed {timings.get('embed', 0):.0f} ms | opensearch {timings.get('opensearch', 0):.0f} ms | "
+        f"zenodo {timings.get('zenodo', 0):.0f} ms | rerank {timings.get('rerank', 0):.0f} ms"
+    )
+    return final
 
 
 async def _search_data_one(
-    search_input: str, start_date: str | None = None, end_date: str | None = None, creator_name: str | None = None
-) -> SearchResults:
-    """Run the hybrid dataset search for a single search term."""
+    search_input: str,
+    limit: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    creator_name: str | None = None,
+    timings: dict[str, float] | None = None,
+) -> list[SearchResults]:
+    """Run the hybrid dataset search for a single search term, one result list per backend queried.
+
+    `timings` (when given) collects the slowest duration seen per stage across all search inputs.
+    """
+
+    def record(stage: str, ms: float) -> None:
+        if timings is not None:
+            timings[stage] = max(timings.get(stage, 0.0), ms)
+
     # ZENODO FEDERATION - started first so it runs while we embed and query OpenSearch.
     zenodo_task = (
-        asyncio.create_task(timed(search_zenodo_datasets(search_input, start_date, end_date, creator_name)))
+        asyncio.create_task(timed(search_zenodo_datasets(search_input, limit, start_date, end_date, creator_name)))
         if settings.zenodo_search_enabled
         else None
     )
 
-    # Generate embedding for the query (blocking CPU work -> offload to a thread)
-    embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
-    # embedding = next(iter(embedding_model.embed([f"passage: {question}"])))
+    with Timer() as t_embed:
+        embedding = await _embed_query(search_input)
+    record("embed", t_embed.ms)
 
     # Define filters
     filters: list[dict[str, Any]] = [
@@ -139,23 +217,10 @@ async def _search_data_one(
         #     }
         # }
     ]
-    # logger.info(
-    #     f'Tool call `search_data`: "{search_input}"',
-    #     extra={
-    #         # "tool": "search_data",
-    #         # "args": {
-    #         "query": search_input,
-    #         "start_date": start_date,
-    #         "end_date": end_date,
-    #         "creator_name": creator_name,
-    #         # }
-    #     },
-    # )
 
     # Soft date handling: a requested range boosts in-range records instead of excluding out-of-range or
     # undated ones. dates.date is usually the publication date, not the data's temporal coverage, so a hard
-    # filter wrongly drops relevant records (e.g. a 1960-2020 dataset published in 2023). Kept out of the
-    # hard `filters` list so it never removes records from either channel.
+    # filter wrongly drops relevant records (e.g. a 1960-2020 dataset published in 2023)
     date_boost_clause: dict[str, Any] | None = None
     if start_date or end_date:
         date_range = {"format": "yyyy-MM-dd"}
@@ -191,7 +256,7 @@ async def _search_data_one(
         )
 
     emb: dict[str, Any] = {
-        "vector": embedding.tolist(),
+        "vector": embedding,
         "k": settings.candidate_pool,
     }
     if filters:
@@ -302,92 +367,56 @@ async def _search_data_one(
             if not has_desc and hit.get("_score") is not None:
                 hit["_score"] *= settings.description_penalty
         raw_hits = sorted(raw_hits, key=lambda h: h.get("_score") or 0.0, reverse=True)
-    # Trim the large candidate pool down to the number of results we actually return.
-    raw_hits = raw_hits[: settings.search_results_count]
+    # Trim the large candidate pool down to what this input contributes to the rerank pool.
+    raw_hits = raw_hits[:limit]
     res = SearchResults(
         total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
         hits=[SearchHit(**hit) for hit in raw_hits],
     )
+    record("opensearch", t_opensearch.ms)
     logger.debug(f"search_data: OpenSearch (no rerank) took {t_opensearch.ms:.1f} ms for {len(res.hits)} hits")
     logger.debug(
         "search_data candidates: "
         + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.opensearch_score:.3f}" for h in res.hits)
     )
 
-    # # Cross-encoder reranking
-    # TODO: use
-    # curl -X POST https://llm.ai.e-infra.cz/v1/rerank \
-    #     -H "Content-Type: application/json" \
-    #     -H "Authorization: Bearer $CESNET_API_KEY" \
-    #     -d '{
-    #         "model": "qwen3-reranker-4b",
-    #         "query": "What is the capital of France?",
-    #         "documents": [
-    #             "Paris is the capital of France.", "Berlin is the capital of Germany.",
-    #         ],
-    #         "top_n": 4
-    #     }'
-    # if res.hits:
-    #   with Timer() as t_rerank:
-    #     documents = []
-    #     for hit in res.hits:
-    #         title = hit.title if hit.title is not None else ""
-    #         description = hit.description if hit.description is not None else ""
-    #         documents.append(f"{title}\n{description}".strip())
-    #     # scores = list(reranker_model.rerank(search_input, documents))
-    #     # for hit, score in zip(res.hits, scores, strict=True):
-    #     #     hit.score = float(score)
-    #     # reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
-    #     scores = [float(s) for s in reranker_model.rerank(search_input, documents)]
-    #     lo, hi = min(scores), max(scores)
-    #     # Sigmoid with temperature so extremes don't saturate to exactly 0 or 1.
-    #     # Temperature is derived from the observed range to keep the spread informative
-    #     # regardless of the model's logit magnitude.
-    #     mid = (hi + lo) / 2
-    #     temperature = max((hi - lo) / 8, 1e-6)
-    #     for hit, score in zip(res.hits, scores, strict=True):
-    #         hit.score = 1.0 / (1.0 + math.exp(-(score - mid) / temperature))
-    #     reranked = sorted(res.hits, key=lambda h: h.score if h.score is not None else float("-inf"), reverse=True)
-    #     res.hits = reranked
-    #     logger.info(
-    #         f"search_data: cross-encoder rerank of top {len(res.hits)} took {t_rerank.ms:.1f} ms "
-    #         f"(total search+rerank: {t_opensearch.ms + t_rerank.ms:.1f} ms)"
-    #     )
-    # ZENODO FEDERATION - append the hits from the query started at the top of this function.
-    if zenodo_task is not None:
-        with Timer() as t_waited:
-            zenodo_res, zenodo_ms = await zenodo_task
-        # TIMING - comment out this one call to drop the Zenodo/OpenSearch latency comparison.
-        # The two queries run concurrently, so `waited` (idle time left once our own search is done)
-        # is what Zenodo actually costs a request; `zenodo` alone is just how slow their API was.
-        logger.debug(
-            f"search_data timing: opensearch {t_opensearch.ms:.0f} ms ({len(res.hits)} hits) | "
-            f"zenodo {zenodo_ms:.0f} ms ({len(zenodo_res.hits)} hits, waited {t_waited.ms:.0f} ms)"
-        )
-        res = merge_results(res, zenodo_res)
-    return res
+    # ZENODO FEDERATION: collect the hits of the query started at the top of this function. Returned
+    # as its own list, so the merge ranks them against ours instead of appending them at the end.
+    if zenodo_task is None:
+        return [res]
+    with Timer() as t_waited:
+        zenodo_res, zenodo_ms = await zenodo_task
+    record("zenodo", zenodo_ms)
+    # TIMING - comment out this one call to drop the Zenodo/OpenSearch latency comparison.
+    # The two queries run concurrently, so `waited` (idle time left once our own search is done)
+    # is what Zenodo actually costs a request; `zenodo` alone is just how slow their API was.
+    logger.debug(
+        f"search_data timing: opensearch {t_opensearch.ms:.0f} ms ({len(res.hits)} hits) | "
+        f"zenodo {zenodo_ms:.0f} ms ({len(zenodo_res.hits)} hits, waited {t_waited.ms:.0f} ms)"
+    )
+    return [res, zenodo_res]
 
 
-@mcp.tool()
-async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
-    """Get metadata for the files in a dataset (name, description, type, dates).
+# @mcp.tool()
+# async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
+#     """Get metadata for the files in a dataset (name, description, type, dates).
 
-    Args:
-        dataset_doi: DOI of the dataset
+#     Args:
+#         dataset_doi: DOI of the dataset
 
-    Returns:
-        Search results with a single dataset matching the DOI
-    """
-    # _log_mcp_user()
-    # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(
-            f"{settings.filemetrix_api}/{quote(dataset_doi, safe='')}",
-            headers={"accept": "application/json"},
-        )
-        if resp.status_code == 200:
-            return FileMetrixFilesResponse.model_validate(resp.json())
-    return FileMetrixFilesResponse(files=[])
+#     Returns:
+#         Search results with a single dataset matching the DOI
+#     """
+#     # _log_mcp_user()
+#     # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
+#     async with httpx.AsyncClient(timeout=10.0) as client:
+#         resp = await client.get(
+#             f"{settings.filemetrix_api}/{quote(dataset_doi, safe='')}",
+#             headers={"accept": "application/json"},
+#         )
+#         if resp.status_code == 200:
+#             return FileMetrixFilesResponse.model_validate(resp.json())
+#     return FileMetrixFilesResponse(files=[])
 
 
 def _formats_to_list(value: Any) -> list[str]:
@@ -400,24 +429,30 @@ def _formats_to_list(value: Any) -> list[str]:
 
 
 @mcp.tool()
-async def search_tools(search_input: list[str]) -> SearchResults:
+async def search_tools(
+    search_input: list[str], user_question: str, limit: int = settings.search_results_count
+) -> SearchResults:
     """Search for tools relevant to the user question
 
     Args:
         search_input: List of search terms, all searched in one call
+        user_question: The user's question, copied as asked (only fix typos and drop filler words).
+            Used to rank the results, so do not summarize it or replace it with the search terms
+        limit: Number of tools to return (default 10)
 
     Returns:
-        Search results with a list of tools relevant to the question, merged across all search terms
+        The `limit` most relevant tools (total_found, hits[]) across all search terms
     """
     # _log_mcp_user()
     queries = [q for q in search_input if q and q.strip()]
     if not queries:
         return SearchResults(total_found=0, hits=[])
-    results = await asyncio.gather(*(_search_tools_one(q) for q in queries))
-    return _interleave(list(results))
+    limit = max(1, min(limit, MAX_RESULTS_COUNT))
+    results = await asyncio.gather(*(_search_tools_one(q, limit) for q in queries))
+    return await _rerank_hits(_rerank_query(user_question, queries), _merge_dedup(list(results)), limit)
 
 
-async def _search_tools_one(search_input: str) -> SearchResults:
+async def _search_tools_one(search_input: str, limit: int) -> SearchResults:
     """Query the tool registry for a single search term."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -432,7 +467,7 @@ async def _search_tools_one(search_input: str) -> SearchResults:
         logger.error(f"search_tools registry query failed: {e}")
         return SearchResults(total_found=0, hits=[])
 
-    rows = rows[: settings.search_results_count]
+    rows = rows[:limit]
     total = len(rows)
     hits: list[SearchHit] = []
     for rank, row in enumerate(rows):
