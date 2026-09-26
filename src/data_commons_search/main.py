@@ -50,6 +50,7 @@ from data_commons_search.db import (
     delete_conversations,
     get_conversation,
     get_conversations,
+    get_latest_stats,
     init_postgres_storage,
     store_messages,
 )
@@ -71,7 +72,6 @@ from data_commons_search.models import (
 )
 from data_commons_search.prompts import SYSTEM_PROMPT
 from data_commons_search.rate_limit import RateLimiter
-from data_commons_search.stats import load_stats
 from data_commons_search.utils import (
     file_logger,
     get_system_prompt,
@@ -688,9 +688,10 @@ async def get_stats() -> DbStats:
     """Return pre-computed stats about the harvested records in datasetdb.
 
     Includes the dataset count per repository and the most popular subjects per repository.
-    Stats are generated offline by `POSTGRES_DB=datasetdb uv run scripts/compute_stats.py`
+    Serves the latest row of the `stats_snapshots` table, appended by
+    `POSTGRES_DB=datasetdb uv run scripts/compute_stats.py`
     """
-    stats = load_stats()
+    stats = get_latest_stats()
     if stats is None:
         raise HTTPException(status_code=404, detail="Stats not available")
     return stats

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # Optional Zenodo personal access token. Only raises our rate limit (their search needs no
     # auth), so an empty value just means anonymous requests.
     zenodo_api_key: str = ""
+    # Share of the returned results reserved for our own index when Zenodo federation is on. The
+    # reranker scores both backends on one scale, and Zenodo (much larger) can otherwise take every
+    # slot, hiding our own records entirely. 0 disables the reservation (pure rerank order).
+    own_results_min_share: float = 0.5
 
     # OpenSearch settings
     opensearch_index: str = "test_datacite"
@@ -56,6 +60,9 @@ class Settings(BaseSettings):
     postgres_host: str = "postgres"
     postgres_port: int = 5432
     postgres_db: str = "appdb"
+    # Database holding the harvested records, read by scripts/compute_stats.py (same host/credentials
+    # as appdb, so only the database name differs).
+    datasetdb_name: str = "datasetdb"
 
     # Number of top subjects to keep per repository in the /stats output
     # (generated offline by scripts/compute_stats.py).
@@ -146,7 +153,16 @@ class Settings(BaseSettings):
     @property
     def postgres_url(self) -> str:
         """Computed PostgreSQL URL using the provided credentials."""
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        return self.postgres_url_for(self.postgres_db)
+
+    @property
+    def datasetdb_url(self) -> str:
+        """Computed PostgreSQL URL for the harvested-records database."""
+        return self.postgres_url_for(self.datasetdb_name)
+
+    def postgres_url_for(self, db_name: str) -> str:
+        """Build a PostgreSQL URL for `db_name` using the configured credentials."""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{db_name}"
 
     @property
     def server_url(self) -> str:

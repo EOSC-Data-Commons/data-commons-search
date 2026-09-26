@@ -1,26 +1,21 @@
-"""Compute and serve aggregated stats about the harvested records in datasetdb.
+"""Compute aggregated stats about the harvested records in datasetdb.
 
 The app user has no access to datasetdb in prod, so the stats are pre-computed offline by
-`scripts/compute_stats.py` (point the POSTGRES_* vars in keys.env at datasetdb with a
-read-capable user) and written to `stats.json` next to this module. The `/stats` endpoint then
-serves that file, which ships with the package/image (the `data/` dir is git/docker-ignored, so it
-cannot live there).
+`scripts/compute_stats.py`, run with POSTGRES_* credentials that can read datasetdb; each run
+appends a row to the `stats_snapshots` table in appdb. The `/stats`
+endpoint serves the latest snapshot from there (see `db.get_latest_stats`), so stats can be
+refreshed without redeploying, and the table keeps the history of growth over time.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
 from data_commons_search import __version__
 from data_commons_search.config import settings
 from data_commons_search.models import DbStats, RepositoryStats, SubjectCount
-from data_commons_search.utils import logger
-
-# Pre-computed stats file, shipped with the package (see module docstring).
-STATS_FILE = Path(__file__).parent / "stats.json"
 
 # The upstream `repositories.code` value is used verbatim as the short display label for each
 # repository (e.g. on the landing-page "Datasets per repository" chart). A few of those codes are
@@ -89,7 +84,8 @@ ORDER BY code, cnt DESC, subject;
 
 def compute_stats() -> DbStats:
     """Query datasetdb and build the aggregated `DbStats` (per-repository counts + top subjects)."""
-    engine = create_engine(settings.postgres_url, pool_pre_ping=True)
+    # Records live in datasetdb, while POSTGRES_DB stays on appdb (where the snapshot is written)
+    engine = create_engine(settings.datasetdb_url, pool_pre_ping=True)
     try:
         with engine.connect() as conn:
             repo_rows = conn.execute(text(REPOSITORY_STATS_SQL)).mappings().all()
@@ -122,23 +118,3 @@ def compute_stats() -> DbStats:
         total_datasets=sum(r.datasets for r in repositories),
         repositories=repositories,
     )
-
-
-def save_stats(stats: DbStats, path: Path = STATS_FILE) -> Path:
-    """Write the computed stats to `path` as indented JSON."""
-    path.write_text(stats.model_dump_json(indent=2))
-    return path
-
-
-def load_stats(path: Path = STATS_FILE) -> DbStats | None:
-    """Load pre-computed stats from `path`, or `None` if the file is missing/invalid."""
-    if not path.exists():
-        logger.warning(f"Stats file not found at {path}; run scripts/compute_stats.py to generate it")
-        return None
-    try:
-        stats = DbStats.model_validate_json(path.read_text())
-    except Exception as exc:
-        logger.error(f"Failed to load stats from {path}: {exc}")
-        return None
-    stats.api_version = __version__
-    return stats

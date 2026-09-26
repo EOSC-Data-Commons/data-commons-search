@@ -11,11 +11,13 @@ from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Integer, Stri
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
+from data_commons_search import __version__
 from data_commons_search.config import settings
 from data_commons_search.models import (
     ConversationDetail,
     ConversationItem,
     ConversationSummary,
+    DbStats,
     MessageItem,
     UserInfo,
 )
@@ -97,6 +99,21 @@ class RateLimit(Base):
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
     count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class StatsSnapshot(Base):
+    """Append-only history of the aggregated datasetdb stats served by `/stats`.
+
+    One row per run of `scripts/compute_stats.py`: the full `DbStats` payload is kept as JSONB so
+    its shape can evolve freely, while `generated_at` is a real column (indexed) since every query
+    on this table orders or filters by time to plot growth.
+    """
+
+    __tablename__ = "stats_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 engine = create_engine(settings.postgres_url, pool_pre_ping=True)
@@ -269,3 +286,24 @@ def delete_conversations(user_sub: str, thread_ids: list[str]) -> None:
             stmt = stmt.where(Conversation.thread_id.in_(thread_ids))
         db.execute(stmt)
         db.commit()
+
+
+def store_stats_snapshot(stats: DbStats) -> None:
+    """Append a `DbStats` snapshot to the history table in appdb."""
+    with SessionLocal.begin() as db:
+        db.add(StatsSnapshot(generated_at=stats.generated_at, stats=stats.model_dump(mode="json")))
+
+
+def get_latest_stats() -> DbStats | None:
+    """Return the most recent stats snapshot, or `None` if the history table is empty."""
+    with SessionLocal() as db:
+        row = db.execute(
+            select(StatsSnapshot).order_by(StatsSnapshot.generated_at.desc()).limit(1)
+        ).scalar_one_or_none()
+    if row is None:
+        logger.warning("No stats snapshot found, run scripts/compute_stats.py to generate one")
+        return None
+    stats = DbStats.model_validate(row.stats)
+    # Stamped at response time: the snapshot was written by whichever version computed it
+    stats.api_version = __version__
+    return stats

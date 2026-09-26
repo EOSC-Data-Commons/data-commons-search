@@ -10,19 +10,22 @@ import sys
 from pathlib import Path
 
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.schema import CreateTable
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 from data_commons_search.db import Base
 
 
 def render_schema_sql() -> str:
-    """Render a CREATE TABLE statement per ORM table, in dependency order."""
+    """Render a CREATE TABLE (plus its CREATE INDEX) per ORM table, in dependency order."""
     dialect = postgresql.dialect()
     statements = []
     for table in Base.metadata.sorted_tables:
         sql = str(CreateTable(table).compile(dialect=dialect)).strip()
-        sql = "\n".join(line.rstrip() for line in sql.splitlines())
-        statements.append(sql + ";")
+        sql = "\n".join(line.rstrip() for line in sql.splitlines()) + ";"
+        # Indexes declared via `index=True` / `Index(...)` are separate statements from CREATE TABLE
+        for index in sorted(table.indexes, key=lambda i: i.name or ""):
+            sql += "\n" + str(CreateIndex(index).compile(dialect=dialect)).strip() + ";"
+        statements.append(sql)
     header = (
         "-- AUTO-GENERATED FILE. DO NOT EDIT MANUALLY.\n"
         "-- Generated from https://github.com/EOSC-Data-Commons/data-commons-search/blob/main/src/data_commons_search/db.py\n"

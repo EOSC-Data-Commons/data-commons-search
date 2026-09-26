@@ -13,7 +13,7 @@ from data_commons_search.config import settings
 from data_commons_search.embeddings import embed_texts, rerank
 from data_commons_search.models import SearchHit, SearchResults, UserInfo
 from data_commons_search.utils import Timer, logger, timed
-from data_commons_search.zenodo import search_zenodo_datasets
+from data_commons_search.zenodo import ZENODO_REPO, search_zenodo_datasets
 
 # Create MCP server https://github.com/modelcontextprotocol/python-sdk
 mcp = FastMCP(
@@ -80,6 +80,23 @@ def _rerank_query(user_question: str, queries: list[str]) -> str:
     return user_question.strip() or " | ".join(queries)
 
 
+def _select_reranked(ranked_hits: list[SearchHit], limit: int) -> list[SearchHit]:
+    """Keep the best `limit` hits, reserving a share of the slots for our own index.
+
+    Zenodo contributes as many candidates as our index per search input and is far larger, so a
+    plain `ranked_hits[:limit]` can return Zenodo only and hide our own records, which the
+    federation is meant to complement rather than replace. Rerank order is kept on both sides: the
+    reserved slots go to our best-scored hits, the rest follows the global rerank order.
+    """
+    reserved = int(limit * settings.own_results_min_share)
+    if reserved <= 0:
+        return ranked_hits[:limit]
+    ours = [hit for hit in ranked_hits if hit.source.repo != ZENODO_REPO][:reserved]
+    reserved_ids = {id(hit) for hit in ours}
+    kept = ours + [hit for hit in ranked_hits if id(hit) not in reserved_ids]
+    return sorted(kept[:limit], key=lambda hit: hit.score or 0.0, reverse=True)
+
+
 async def _rerank_hits(
     query: str, res: SearchResults, limit: int, timings: dict[str, float] | None = None
 ) -> SearchResults:
@@ -95,16 +112,17 @@ async def _rerank_hits(
         return res
     documents = [f"{hit.title or ''}\n{hit.description or ''}".strip() for hit in res.hits]
     with Timer() as t_rerank:
-        ranked = await rerank(query, documents, top_n=limit)
+        # Score the whole pool (no top_n): the selection below needs every hit's score, not just
+        # the head the API would return, or the reserved slots have nothing left to pick from
+        ranked = await rerank(query, documents)
     if timings is not None:
         timings["rerank"] = t_rerank.ms
     if ranked is None:
         logger.warning(f"Reranking unavailable, returning the first {limit} merged hits")
         return SearchResults(total_found=res.total_found, hits=res.hits[:limit])
-    hits = []
-    for idx, score in ranked[:limit]:
+    for idx, score in ranked:
         res.hits[idx].score = score
-        hits.append(res.hits[idx])
+    hits = _select_reranked([res.hits[idx] for idx, _ in ranked], limit)
     logger.debug(
         f"rerank of {len(documents)} hits took {t_rerank.ms:.0f} ms, kept {len(hits)}: "
         + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.score:.3f}" for h in hits)

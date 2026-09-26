@@ -307,7 +307,10 @@ uv cache clean
 
 ### 🔧 Maintenance
 
-Pre-compute stats for the datasets in the db to `src/data_commons_search/stats.json`:
+Pre-compute the stats served by `/stats`: reads the harvested records from `datasetdb` and appends
+a row to the `stats_snapshots` table in `appdb` (same host and credentials, set `DATASETDB_NAME` to
+use another database name). `/stats` then serves the new numbers without a redeploy, and the table
+keeps the history of growth. Requires `POSTGRES_*` credentials that can read `datasetdb`:
 
 ```sh
 uv run --env-file prod.env scripts/compute_stats.py
