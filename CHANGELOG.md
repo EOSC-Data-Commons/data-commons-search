@@ -1,5 +1,17 @@
 # 🪵 Changelog
 
+## [0.10.1](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.10.0..v0.10.1) - 2026-09-26
+
+### ⛰️ Features
+
+- `search_data` and `search_tools` now take a list of str as input (to perform multiple research in 1 tool call) - ([02e485d](https://github.com/EOSC-Data-Commons/data-commons-search/commit/02e485d427995508f5e283a3fc96cc43ae779fe8))
+- Add reranking and multiple search input - ([f9b437b](https://github.com/EOSC-Data-Commons/data-commons-search/commit/f9b437b6f5710d1169b57991fbbd0bba0a2d2af5))
+- Move precomputed stats from a JSON file in the git repo, to a table in the postgreSQL database, to make it easier to update it - ([c58e52f](https://github.com/EOSC-Data-Commons/data-commons-search/commit/c58e52f839afed31cb235ee22c9ff1b81d8537d3))
+
+### 🐛 Bug Fixes
+
+- Fix stats.json (generate from prod instead of staging) - ([9f9a27a](https://github.com/EOSC-Data-Commons/data-commons-search/commit/9f9a27a4a4becbfa039dae5363f634a6a23d74ff))
+
 ## [0.10.0](https://github.com/EOSC-Data-Commons/data-commons-search/compare/v0.7.14..v0.10.0) - 2026-08-14
 
 ### ⚙️ Continuous Integration
