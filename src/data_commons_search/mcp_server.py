@@ -1,17 +1,16 @@
 import argparse
 import asyncio
-import json
 from typing import Any
+from urllib.parse import quote
 
 import httpx
-from fastembed import TextEmbedding
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
-from opensearchpy import OpenSearch
 
 from data_commons_search.config import settings
+from data_commons_search.dataset_search import search_datasets
 from data_commons_search.embeddings import embed_texts, rerank
-from data_commons_search.models import SearchHit, SearchResults, UserInfo
+from data_commons_search.models import FileMetrixFilesResponse, SearchHit, SearchResults, UserInfo
 from data_commons_search.utils import Timer, logger, timed
 from data_commons_search.zenodo import ZENODO_REPO, search_zenodo_datasets
 
@@ -19,15 +18,12 @@ from data_commons_search.zenodo import ZENODO_REPO, search_zenodo_datasets
 mcp = FastMCP(
     name="EOSC Data Commons MCP",
     debug=settings.debug_enabled,
-    dependencies=["mcp", "httpx", "opensearch-py", "fastembed", "pydantic"],
+    dependencies=["mcp", "httpx", "sqlalchemy", "psycopg2-binary", "pydantic"],
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,
     stateless_http=True,
     streamable_http_path="/",
 )
-
-embedding_model = TextEmbedding(settings.embedding_model)
-opensearch_client = OpenSearch(hosts=[settings.opensearch_url], pool_maxsize=20)
 
 # Guard rail on the `limit` a caller can ask a search tool for
 MAX_RESULTS_COUNT = 50
@@ -41,9 +37,6 @@ def _log_mcp_user() -> UserInfo | None:
     """
     token = get_access_token()
     return getattr(token, "userinfo", None) if token else None
-
-
-# https://github.com/EOSC-Data-Commons/metadata-warehouse/blob/main/src/config/opensearch_mapping.json
 
 
 def _hit_key(hit: SearchHit) -> str:
@@ -130,20 +123,16 @@ async def _rerank_hits(
     return SearchResults(total_found=res.total_found, hits=hits)
 
 
-async def _embed_query(search_input: str) -> list[float]:
-    """Query vector: from the embeddings API when `embed_api_model` is set, else local fastembed.
+async def _embed_query(search_input: str) -> list[float] | None:
+    """Query vector from the embeddings API, None when unavailable (the search is then lexical only).
 
-    The OpenSearch index holds vectors from the fastembed `embedding_model`, so switching to the API
-    needs the index re-embedded with the same model (and `embed_query_prefix` set for its family).
+    Must be the model and the prefix family the generate_embeddings DAG indexed with.
     """
-    if settings.embed_api_model:
-        vectors = await embed_texts([f"{settings.embed_query_prefix}{search_input}"])
-        if vectors:
-            return vectors[0]
-        logger.warning("Embeddings API unavailable, falling back to the local fastembed model")
-    # Blocking CPU work -> offload to a thread
-    embedding = await asyncio.to_thread(lambda: next(iter(embedding_model.embed([search_input]))))
-    return embedding.tolist()
+    vectors = await embed_texts([f"{settings.embed_query_prefix}{search_input}"])
+    if not vectors:
+        logger.warning("Embeddings API unavailable, searching datasets with BM25 only")
+        return None
+    return vectors[0]
 
 
 @mcp.tool()
@@ -189,7 +178,7 @@ async def search_data(
         final = await _rerank_hits(_rerank_query(user_question, queries), pool, limit, timings)
     logger.info(
         f"`search_data` took {t_total.ms:.0f} ms for {len(queries)} search input(s), {len(final.hits)} hits: "
-        f"embed {timings.get('embed', 0):.0f} ms | opensearch {timings.get('opensearch', 0):.0f} ms | "
+        f"embed {timings.get('embed', 0):.0f} ms | postgres {timings.get('postgres', 0):.0f} ms | "
         f"zenodo {timings.get('zenodo', 0):.0f} ms | rerank {timings.get('rerank', 0):.0f} ms"
     )
     return final
@@ -212,7 +201,7 @@ async def _search_data_one(
         if timings is not None:
             timings[stage] = max(timings.get(stage, 0.0), ms)
 
-    # ZENODO FEDERATION - started first so it runs while we embed and query OpenSearch.
+    # ZENODO FEDERATION - started first so it runs while we embed and query postgres.
     zenodo_task = (
         asyncio.create_task(timed(search_zenodo_datasets(search_input, limit, start_date, end_date, creator_name)))
         if settings.zenodo_search_enabled
@@ -223,178 +212,17 @@ async def _search_data_one(
         embedding = await _embed_query(search_input)
     record("embed", t_embed.ms)
 
-    # Define filters
-    filters: list[dict[str, Any]] = [
-        # NOTE: Quality gate: only keep records that actually carry a description. We don't want that
-        # {"nested": {"path": "descriptions", "query": {"exists": {"field": "descriptions.description"}}}},
-        # TODO: latest indexing does not seems to include resourceTypeGeneral field
-        # {
-        #     "nested": {
-        #         "path": "types",
-        #         "query": {"term": {"types.resourceTypeGeneral": "Dataset"}},
-        #     }
-        # }
-    ]
-
-    # Soft date handling: a requested range boosts in-range records instead of excluding out-of-range or
-    # undated ones. dates.date is usually the publication date, not the data's temporal coverage, so a hard
-    # filter wrongly drops relevant records (e.g. a 1960-2020 dataset published in 2023)
-    date_boost_clause: dict[str, Any] | None = None
-    if start_date or end_date:
-        date_range = {"format": "yyyy-MM-dd"}
-        if start_date:
-            date_range["gte"] = start_date
-        if end_date:
-            date_range["lte"] = end_date
-        date_boost_clause = {
-            "nested": {
-                "path": "dates",
-                "query": {"range": {"dates.date": date_range}},
-                "boost": settings.date_boost,
-            }
-        }
-
-    # Glucose level changes in the liver of individuals with type 1 diabetes from 1980 to 2020 by Westerink
-    if creator_name:
-        filters.append(
-            {"query_string": {"query": f"*{creator_name}*", "default_field": "_creator", "default_operator": "AND"}}
-            # {
-            #     "nested": {
-            #         "path": "creators",
-            #         "query": {
-            #             "wildcard": {
-            #                 "creators.creatorName": {
-            #                     "value": f"*{creator_name}*",
-            #                     "case_insensitive": True,
-            #                 }
-            #             }
-            #         },
-            #     }
-            # }
-        )
-
-    emb: dict[str, Any] = {
-        "vector": embedding,
-        "k": settings.candidate_pool,
-    }
-    if filters:
-        emb["filter"] = {"bool": {"must": filters}}
-
-    keyword_query: dict[str, Any] = {
-        "multi_match": {
-            "query": search_input,
-            "fields": [
-                # "titles.title^2",
-                "titles.title",
-                "descriptions.description",
-                "subjects.subject",
-                # "subjects.subject^1.5",
-                # TODO: add more fields?
-            ],
-        }
-    }
-    # NOTE: the description penalty is applied after search on the final hit scores
-    # (see below). An in-query function_score is a no-op under the RRF pipeline, which is rank-based
-    # and discards score magnitude.
-    # Wrap the keyword query when we have hard filters (creator) and/or a soft date boost.
-    if filters or date_boost_clause:
-        bool_query: dict[str, Any] = {"must": [keyword_query]}
-        if filters:
-            bool_query["filter"] = filters
-        if date_boost_clause:
-            bool_query["should"] = [date_boost_clause]
-        keyword_query = {"bool": bool_query}
-
-    body = {
-        "size": settings.candidate_pool,
-        "_source": [
-            "titles",
-            "subjects",
-            "descriptions",
-            "url",
-            "doi",
-            "dates",
-            "publicationYear",
-            "creators",
-            "_harvest_url",
-            "_repo",
-        ],
-        "query": {
-            "hybrid": {
-                "queries": [
-                    {"knn": {"emb": emb}},
-                    keyword_query,
-                ],
-            }
-        },
-        # Inline search pipeline: min_max normalization makes the weights
-        # actually affect ranking (RRF is rank-based and ignores score magnitude)
-        "search_pipeline": {
-            "phase_results_processors": [
-                {
-                    "normalization-processor": {
-                        "normalization": {"technique": "min_max"},
-                        "combination": {
-                            "technique": "arithmetic_mean",
-                            "parameters": {"weights": settings.hybrid_weights},
-                        },
-                    }
-                }
-                ## RRF alternative
-                # {
-                #     "score-ranker-processor": {
-                #         "combination": {
-                #         "technique": "rrf",
-                #         "rank_constant": 40,
-                #         "parameters": { "weights": [0.4, 0.6] }
-                #         }
-                #     }
-                # }
-            ]
-        },
-    }
-    # logger.info(f"OpenSearch query body: {json.dumps(body, indent=2)}")
-    logger.debug(f"OpenSearch query filters: {json.dumps(filters, indent=2)}")
-    with Timer() as t_opensearch:
+    with Timer() as t_search:
         try:
-            # Run the blocking OpenSearch call in a thread so it doesn't freeze the event loop
-            resp = await asyncio.to_thread(
-                lambda: opensearch_client.search(
-                    index=settings.opensearch_index,
-                    body=body,
-                    # Deterministic scoring: global term stats (consistent IDF) + pinned shard copies,
-                    # so near-tied results don't flip between identical queries (primary/replica IDF divergence)
-                    search_type="dfs_query_then_fetch",
-                    preference="data-commons-search",
-                )
-            )
+            res = await search_datasets(search_input, embedding, limit, start_date, end_date, creator_name)
         except Exception as e:
-            logger.error(f"OpenSearch query failed: {e}")
+            logger.error(f"Postgres dataset search failed: {e}")
             # Degrade to no local hits rather than returning early, so a Zenodo result set still
             # reaches the caller and its task is never left dangling.
-            resp = {}
-    # Extract hits from OpenSearch response
-    raw_hits = resp.get("hits", {}).get("hits", [])
-
-    # Soft description penalty applied on the final score (works under any pipeline, incl. rank-based RRF
-    # which ignores in-query score tweaks): demote records without a description, then re-sort.
-    if settings.description_penalty < 1.0:
-        for hit in raw_hits:
-            descriptions = hit.get("_source", {}).get("descriptions") or []
-            has_desc = any(isinstance(d, dict) and d.get("description") for d in descriptions)
-            if not has_desc and hit.get("_score") is not None:
-                hit["_score"] *= settings.description_penalty
-        raw_hits = sorted(raw_hits, key=lambda h: h.get("_score") or 0.0, reverse=True)
-    # Trim the large candidate pool down to what this input contributes to the rerank pool.
-    raw_hits = raw_hits[:limit]
-    res = SearchResults(
-        total_found=int(resp.get("hits", {}).get("total", {}).get("value", 0)),
-        hits=[SearchHit(**hit) for hit in raw_hits],
-    )
-    record("opensearch", t_opensearch.ms)
-    logger.debug(f"search_data: OpenSearch (no rerank) took {t_opensearch.ms:.1f} ms for {len(res.hits)} hits")
+            res = SearchResults(total_found=0, hits=[])
+    record("postgres", t_search.ms)
     logger.debug(
-        "search_data candidates: "
+        f"search_data candidates ({t_search.ms:.0f} ms): "
         + " | ".join(f"{h.title!r} ({h.source.repo}) score={h.opensearch_score:.3f}" for h in res.hits)
     )
 
@@ -405,36 +233,36 @@ async def _search_data_one(
     with Timer() as t_waited:
         zenodo_res, zenodo_ms = await zenodo_task
     record("zenodo", zenodo_ms)
-    # TIMING - comment out this one call to drop the Zenodo/OpenSearch latency comparison.
+    # TIMING - comment out this one call to drop the Zenodo/postgres latency comparison.
     # The two queries run concurrently, so `waited` (idle time left once our own search is done)
     # is what Zenodo actually costs a request; `zenodo` alone is just how slow their API was.
     logger.debug(
-        f"search_data timing: opensearch {t_opensearch.ms:.0f} ms ({len(res.hits)} hits) | "
+        f"search_data timing: postgres {t_search.ms:.0f} ms ({len(res.hits)} hits) | "
         f"zenodo {zenodo_ms:.0f} ms ({len(zenodo_res.hits)} hits, waited {t_waited.ms:.0f} ms)"
     )
     return [res, zenodo_res]
 
 
-# @mcp.tool()
-# async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
-#     """Get metadata for the files in a dataset (name, description, type, dates).
+@mcp.tool()
+async def get_dataset_files(dataset_doi: str) -> FileMetrixFilesResponse:
+    """Get metadata for the files in a dataset (name, description, type, dates).
 
-#     Args:
-#         dataset_doi: DOI of the dataset
+    Args:
+        dataset_doi: DOI of the dataset
 
-#     Returns:
-#         Search results with a single dataset matching the DOI
-#     """
-#     # _log_mcp_user()
-#     # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
-#     async with httpx.AsyncClient(timeout=10.0) as client:
-#         resp = await client.get(
-#             f"{settings.filemetrix_api}/{quote(dataset_doi, safe='')}",
-#             headers={"accept": "application/json"},
-#         )
-#         if resp.status_code == 200:
-#             return FileMetrixFilesResponse.model_validate(resp.json())
-#     return FileMetrixFilesResponse(files=[])
+    Returns:
+        Search results with a single dataset matching the DOI
+    """
+    # _log_mcp_user()
+    # https://filemetrix.labs.dansdemo.nl/api/v1/10.17026%2FSS%2FR5XWCC
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"{settings.filemetrix_api}/{quote(dataset_doi, safe='')}",
+            headers={"accept": "application/json"},
+        )
+        if resp.status_code == 200:
+            return FileMetrixFilesResponse.model_validate(resp.json())
+    return FileMetrixFilesResponse(files=[])
 
 
 def _formats_to_list(value: Any) -> list[str]:

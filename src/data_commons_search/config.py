@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
 
 
 class Settings(BaseSettings):
@@ -36,45 +37,38 @@ class Settings(BaseSettings):
     # slot, hiding our own records entirely. 0 disables the reservation (pure rerank order).
     own_results_min_share: float = 0.5
 
-    # OpenSearch settings
-    opensearch_index: str = "test_datacite"
-    # opensearch_index: str = "20260507_datacite"
-    opensearch_url: str = "http://opensearch:9200"
+    # Hybrid search on the appdb `dataset` tables (see dataset_search.py, built by the DAGs in dags/)
     # Default for the `limit` argument of the search MCP tools: how many results a tool returns, and
     # how many each search input retrieves from our index and from Zenodo before reranking.
     search_results_count: int = 10
-    # knn candidate pool retrieved and combined before trimming to the requested limit. Must be larger
-    # than that limit: a small pool drops relevant near-duplicates and makes min_max normalization swing
+    # Candidates retrieved per method and field, then combined before trimming to the requested
+    # limit. Must be larger than that limit: a small pool makes min-max normalization swing
     candidate_pool: int = 100
-    # Hybrid combination weights [knn (semantic), keyword (BM25)]
+    # Hybrid combination weights [semantic (vectors), lexical (BM25)]
     hybrid_weights: list[float] = [0.6, 0.4]
-    # Small soft penalty (0..1) applied to the keyword score of records lacking a description
-    # description_penalty: float = 0.05
-    description_penalty: float = 0.1
-    # Boost (not hard filter) for records whose dates.date falls in a requested range
-    # Boosting ranks in-range records higher while keeping undated/out-of-range ones available. <=1.0 effectively disables the boost
-    date_boost: float = 2.0
+    # Weight of each field within a method, normalized to sum to 1
+    search_field_weights: dict[str, float] = {"title": 0.4, "keywords": 0.2, "description": 0.4}
+    # Multiplier (not a filter) on the score of datasets with a coverage date (Collected, Coverage,
+    # Valid) in the requested range. 1.0 disables it
+    date_boost: float = 1.2
 
-    postgres_password: str = "postgres"  # noqa: S105
-    postgres_user: str = "postgres"
     postgres_host: str = "postgres"
     postgres_port: int = 5432
     postgres_db: str = "appdb"
-    # Database holding the harvested records, read by scripts/compute_stats.py (same host/credentials
-    # as appdb, so only the database name differs).
+    # Role of the search API: reads all of appdb, writes only the user tables (users, conversations,
+    # messages, rate_limits)
+    postgres_appdb_search_user: str = "app"
+    postgres_appdb_search_password: str = ""
+    # Role of the ingestion (search pipeline DAGs, scripts): reads all the warehouse databases, owns
+    # and writes the appdb tables
+    postgres_appdb_ingest_user: str = "appdb_ingest"
+    postgres_appdb_ingest_password: str = ""
+    # Database holding the harvested records, read by scripts/compute_stats.py with the ingest role
     datasetdb_name: str = "datasetdb"
 
     # Number of top subjects to keep per repository in the /stats output
     # (generated offline by scripts/compute_stats.py).
     stats_top_subjects: int = 15
-
-    # Embedding models: https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    embedding_dimensions: int = 384  # 60MB
-    # sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 384
-    # sentence-transformers/paraphrase-multilingual-mpnet-base-v2 768
-    # embedding_model: str = "intfloat/multilingual-e5-large"
-    # embedding_dimensions: int = 1024  # 2.2GB
 
     # LiteLLM API used for embeddings (OpenAI-compatible /embeddings) and reranking (/rerank)
     embed_api_url: str = "https://llm.ai.egi.eu/v1"
@@ -83,9 +77,12 @@ class Settings(BaseSettings):
     # Apply the Qwen3-Reranker prompt template to the /rerank query and documents ourselves, which
     # the model needs and vLLM does not do. Off for a reranker that templates server-side
     rerank_prompt_template: bool = True
-    embed_api_model: str = ""
-    # Task prefix the API model family expects on a query ("search_query: " for nomic, "query: " for e5)
-    embed_query_prefix: str = ""
+    # Must be the model the generate_embeddings DAG indexed with (EMBED_API_MODEL there)
+    embed_api_model: str = "nomic-embed-text-v2-moe"
+    # Task prefixes the model family expects ("search_query: " / "search_document: " for nomic,
+    # "query: " / "passage: " for e5). The document prefix is also read by the generate_embeddings DAG
+    embed_query_prefix: str = "search_query: "
+    embed_document_prefix: str = "search_document: "
 
     # LLM providers API keys
     default_llm_model: str = "cesnet/agentic"
@@ -151,18 +148,29 @@ class Settings(BaseSettings):
     )
 
     @property
-    def postgres_url(self) -> str:
-        """Computed PostgreSQL URL using the provided credentials."""
-        return self.postgres_url_for(self.postgres_db)
+    def appdb_search_url(self) -> URL:
+        """appdb as the search role, used by the API."""
+        return self.postgres_url_for(
+            self.postgres_db, self.postgres_appdb_search_user, self.postgres_appdb_search_password
+        )
 
     @property
-    def datasetdb_url(self) -> str:
-        """Computed PostgreSQL URL for the harvested-records database."""
-        return self.postgres_url_for(self.datasetdb_name)
+    def appdb_ingest_url(self) -> URL:
+        """appdb as the ingest role, which creates and fills the tables."""
+        return self.postgres_url_for(
+            self.postgres_db, self.postgres_appdb_ingest_user, self.postgres_appdb_ingest_password
+        )
 
-    def postgres_url_for(self, db_name: str) -> str:
-        """Build a PostgreSQL URL for `db_name` using the configured credentials."""
-        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{db_name}"
+    @property
+    def datasetdb_url(self) -> URL:
+        """The harvested-records database, read by the ingest role."""
+        return self.postgres_url_for(
+            self.datasetdb_name, self.postgres_appdb_ingest_user, self.postgres_appdb_ingest_password
+        )
+
+    def postgres_url_for(self, db_name: str, user: str, password: str) -> URL:
+        """PostgreSQL URL of `db_name` on the configured server, the password escaped."""
+        return URL.create("postgresql", user, password, self.postgres_host, self.postgres_port, db_name)
 
     @property
     def server_url(self) -> str:

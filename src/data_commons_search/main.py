@@ -5,7 +5,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,7 +51,6 @@ from data_commons_search.db import (
     get_conversation,
     get_conversations,
     get_latest_stats,
-    init_postgres_storage,
     store_messages,
 )
 from data_commons_search.logging import BLUE, BOLD, RESET, setup_logging
@@ -89,9 +88,8 @@ rate_limiter = RateLimiter()
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """FastAPI lifespan that initializes the MCP session manager."""
-    init_postgres_storage()
     async with mcp.session_manager.run():
         yield
 
@@ -160,8 +158,8 @@ langfuse = Langfuse(
 logger.info(f"""🔭 {BOLD}{BLUE}EOSC Data Commons Search API{RESET} · {BOLD}{settings.server_url}{RESET}
 ⚡️ Streamable HTTP MCP server · {settings.server_url}/mcp
 🔓 Login · {settings.server_url}/auth/login
-🐘 PostgreSQL · {BOLD}{settings.postgres_host}{RESET}
-🔎 OpenSearch · {BOLD}{settings.opensearch_url}{RESET}""")
+🐘 PostgreSQL · {BOLD}{settings.postgres_host}/{settings.postgres_db}{RESET}
+🔎 Embeddings · {BOLD}{settings.embed_api_model}{RESET}""")
 
 
 @app.post("/chat")
