@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import text
 
 import data_commons_search.db as db_module
-from data_commons_search.db import Base
+from data_commons_search.db_models import Base
 
 
 def postgres_available() -> bool:

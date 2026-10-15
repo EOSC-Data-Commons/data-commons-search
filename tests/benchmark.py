@@ -25,8 +25,10 @@ from rich.progress import (
 )
 from rich.table import Table
 from rich.text import Text
+from sqlalchemy import text
 
 from data_commons_search.config import settings
+from data_commons_search.db import engine
 
 console = Console()
 
@@ -78,7 +80,7 @@ test_items: list[TestItem] = [
         ],
     },
     {
-        "input": "Covid 19 in EU",
+        "input": "Covid 19 in the Netherlands",
         "lang": "en",
         "expected_results": [
             {
@@ -157,10 +159,11 @@ class ConditionResult:
 # --- HTTP helpers ---
 
 
-def opensearch_is_available() -> bool:
+def dataset_table_is_available() -> bool:
+    """Whether the appdb `dataset` table built by the search pipeline DAGs is reachable."""
     try:
-        r = httpx.get(settings.opensearch_url.rstrip("/") + "/_cluster/health", timeout=2.0)
-        return 200 <= r.status_code < 400
+        with engine.connect() as conn:
+            return conn.execute(text("SELECT to_regclass('dataset') IS NOT NULL")).scalar() is True
     except Exception:
         return False
 
@@ -243,8 +246,10 @@ def check_success(test_item: TestItem, found_ids: list[str]) -> bool:
 
 
 def run_benchmark() -> None:
-    if not opensearch_is_available():
-        console.print(Panel(f"[bold red]OpenSearch unreachable at {settings.opensearch_url}[/]", title="Error"))
+    if not dataset_table_is_available():
+        console.print(
+            Panel(f"[bold red]No dataset table in {settings.postgres_host}/{settings.postgres_db}[/]", title="Error")
+        )
         return
 
     conditions = all_conditions()
