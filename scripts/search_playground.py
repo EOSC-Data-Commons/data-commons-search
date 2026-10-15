@@ -4,8 +4,8 @@ Usage:
     uv run --env-file keys.env scripts/search_playground.py "Data about CO2 levels in europe between 1960 and 2020" --start 1960-01-01 --end 2025-12-31
     uv run --env-file keys.env scripts/search_playground.py "CO2 levels Europe"
 
-Point it at the right cluster by setting OPENSEARCH_URL (or opensearch_url in keys.env),
-e.g. OPENSEARCH_URL=http://localhost:9200 uv run python scripts/search_playground.py "..."
+Searches the appdb `dataset` tables of the POSTGRES_* database (built by the DAGs in dags/),
+e.g. POSTGRES_HOST=localhost uv run python scripts/search_playground.py "..."
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ from data_commons_search.mcp_server import search_data
 
 
 async def run(query: str, start: str | None, end: str | None, creator: str | None) -> None:
-    print(f"OpenSearch: {settings.opensearch_url}")
-    res = await search_data([query], start_date=start, end_date=end, creator_name=creator)
+    print(f"Postgres: {settings.postgres_host}/{settings.postgres_db}")
+    res = await search_data([query], user_question=query, start_date=start, end_date=end, creator_name=creator)
 
     print(f"\n{'=' * 78}")
     print(f"  query : {query}")
-    print(f"  index : {settings.opensearch_index}   total matched: {res.total_found}")
+    print(f"  total matched: {res.total_found}")
     print(f"{'=' * 78}")
     for i, hit in enumerate(res.hits, 1):
         title = hit.title or "(no title)"

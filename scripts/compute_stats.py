@@ -5,8 +5,8 @@ Reads the harvested records from DATASETDB_NAME (default "datasetdb") and append
 credentials. So /stats picks up the new numbers without a redeploy, and the table keeps the
 history of growth over time.
 
-The app user has no access to datasetdb in prod, so run this offline with POSTGRES_* credentials
-that can read datasetdb and write appdb:
+Run offline as the ingest role (POSTGRES_APPDB_INGEST_USER and _PASSWORD), which reads datasetdb and
+writes the stats_snapshots table (the search role of the API only reads it):
 
     uv run --env-file .staging.env scripts/compute_stats.py
 
