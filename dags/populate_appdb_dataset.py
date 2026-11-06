@@ -11,14 +11,14 @@ from typing import Any
 
 from airflow.sdk import Param, dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowSkipException
+from sqlalchemy import text
+
+from data_commons_search import dataset_models, db_models
 from search_pipeline.assets import DATASET_TABLE
 from search_pipeline.config import get_settings
 from search_pipeline.db import appdb_engine
 from search_pipeline.embeddings import queued_count
 from search_pipeline.transform import has_datasets, populate_appdb_dataset
-from sqlalchemy import text
-
-from data_commons_search import dataset_models, db_models
 
 # Records committed in datasetdb after the previous run started can carry an older updated_at
 OVERLAP = timedelta(hours=6)

@@ -12,8 +12,8 @@ the creator names by the `creator_name` materialized view (fuzzy creator filter)
 dags/search_pipeline/embeddings.py).
 
 The search indexes are declared on the models but marked DEFERRED: `create_all` skips them and
-the rebuild_indexes DAG builds them after a bulk load. A DiskANN graph filled by incremental inserts
-from empty has catastrophic recall, and BM25 also builds faster in one pass.
+the rebuild_indexes DAG builds them after a bulk load. The VectorChord clusters are computed from
+the rows present when the index is built, and BM25 also builds faster in one pass.
 """
 
 import os
@@ -88,6 +88,22 @@ creator_name_view = table(
 def bm25_index_name(field: str) -> str:
     """BM25 index of a field, `to_bm25query()` takes its name."""
     return f"dataset_{field}_bm25_idx"
+
+
+# VectorChord vchordrq index of each field: IVF with RaBitQ codes, reranked with the vectors of the table
+# (rerank_in_table, else the index holds a copy of them, 15GB instead of 0.7GB for 3.7M vectors). 2000
+# lists for 1M-2M rows per field (VectorChord docs, ~10000 above 2M)
+VCHORDRQ_OPTIONS = """$$
+residual_quantization = true
+rerank_in_table = true
+[build.internal]
+lists = [2000]
+spherical_centroids = true
+build_threads = 8
+$$"""
+# Lists scanned per search, stored on the index (`ALTER INDEX ... SET (probes = '...')` changes it). 800
+# for recall@100 0.97 (0.84 at 200): the queries fall far from the dense clusters of the short texts
+VCHORDRQ_PROBES = 800
 
 
 class Base(DeclarativeBase):
@@ -206,14 +222,14 @@ class DatasetEmbedding(Base):
         CheckConstraint(
             f"field IN ({', '.join(repr(f) for f in SEARCH_FIELDS)})", name="dataset_embedding_field_check"
         ),
-        # Semantic search, one DiskANN graph per field: a denser graph than one shared label-filtered
-        # graph, and each field always contributes candidates
+        # Semantic search, one partial index per field: each field always contributes candidates
         *(
             Index(
-                f"dataset_embedding_{field}_diskann_idx",
+                f"dataset_embedding_{field}_vchordrq_idx",
                 "embedding",
-                postgresql_using="diskann",
+                postgresql_using="vchordrq",
                 postgresql_ops={"embedding": "vector_cosine_ops"},
+                postgresql_with={"options": VCHORDRQ_OPTIONS, "probes": f"'{VCHORDRQ_PROBES}'"},
                 postgresql_where=text(f"field = '{field}'"),
                 info=DEFERRED,
             )
@@ -224,7 +240,7 @@ class DatasetEmbedding(Base):
 
 
 def search_indexes() -> list[Index]:
-    """The deferred indexes, in creation order: filters first, the heavy DiskANN builds last."""
+    """The deferred indexes, in creation order: filters first, the heavy vector index builds last."""
     return [
         i
         for table in Base.metadata.sorted_tables
@@ -233,8 +249,8 @@ def search_indexes() -> list[Index]:
     ]
 
 
-def is_diskann(index: Index) -> bool:
-    return index.dialect_options["postgresql"]["using"] == "diskann"
+def is_vector_index(index: Index) -> bool:
+    return index.dialect_options["postgresql"]["using"] == "vchordrq"
 
 
 # `create_all` skips the deferred indexes, rebuild_indexes executes their CreateIndex directly (not filtered)

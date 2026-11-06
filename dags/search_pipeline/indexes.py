@@ -22,9 +22,9 @@ def build_indexes(
 ) -> dict[str, int]:
     """Create the missing indexes, and with `rebuild` also rebuild the existing ones, then ANALYZE.
 
-    Indexes are maintained on insert, so the daily runs only create what is missing: the DiskANN
-    indexes dropped before a full embeddings load (a graph grown one insert at a time from empty
-    loses its recall), or new indexes declared on the models. A rebuild uses REINDEX CONCURRENTLY,
+    Indexes are maintained on insert, so the daily runs only create what is missing: the vector
+    indexes dropped before a full embeddings load (their clusters are computed from the rows present
+    at build time), or new indexes declared on the models. A rebuild uses REINDEX CONCURRENTLY,
     which builds a copy and swaps it, so search keeps working meanwhile.
     """
     counts: Counter[str] = Counter()

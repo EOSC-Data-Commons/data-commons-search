@@ -120,10 +120,10 @@ docker compose up postgres
 To create the empty `appdb`, run from the `metadata-warehouse` repo:
 
 ```sh
-uv run --directory scripts/postgres_data create_db.py --db appdb --reset
+docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" appdb'
 ```
 
-Its tables are created from the SQLAlchemy models of [`db_models.py`](src/data_commons_search/db_models.py) and [`dataset_models.py`](src/data_commons_search/dataset_models.py) when missing, by the `create_appdb_tables` task of the `populate_appdb_dataset` DAG (the deferred search indexes are built by the `rebuild_indexes` DAG). Two roles access `appdb`:
+Its tables are created from the SQLAlchemy models of [`db_models.py`](src/data_commons_search/db_models.py) and [`dataset_models.py`](src/data_commons_search/dataset_models.py) when missing, by the `create_appdb_tables` task of the `populate_appdb_dataset` DAG. Two roles access `appdb`:
 
 | Role | Env vars | Access |
 | --- | --- | --- |
@@ -133,9 +133,9 @@ Its tables are created from the SQLAlchemy models of [`db_models.py`](src/data_c
 Until the metadata-warehouse creates them, create the roles (with the passwords of `keys.env`), their grants and the extensions with [`init_roles.sql`](scripts/init_roles.sql), as the warehouse admin, from the `metadata-warehouse` repo:
 
 ```sh
-docker compose exec -T postgres psql -U postgres -d appdb -v ON_ERROR_STOP=1 \
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d appdb -v ON_ERROR_STOP=1 \
   -v search_user=app -v search_password=... \
-  -v ingest_user=appdb_ingest -v ingest_password=... < ../data-commons-search/scripts/init_roles.sql
+  -v ingest_user=appdb_ingest -v ingest_password=...' < ../data-commons-search/scripts/init_roles.sql
 ```
 
 Then create the tables by running the `create_appdb_tables` task of the `populate_appdb_dataset` DAG (it runs at the start of each DAG run, the API needs the user tables before the first one):
@@ -214,38 +214,14 @@ SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --
 
 ### 🔎 Search pipeline
 
-The datasets searched by the API are prepared from the records harvested in `datasetdb` by 3 Airflow DAGs in the [`dags/`](dags) folder, run by the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse) Airflow. They are chained through Airflow assets: each successful run triggers the next DAG. A task with nothing to hand over is skipped, which stops the pipeline there: `populate_appdb_dataset` when no dataset waits for embeddings (checked on the queue, so leftovers of a failed embeddings run are caught up), `generate_embeddings` when it embedded nothing. The DAGs are created unpaused, a paused DAG drops the events that would trigger it.
+The datasets searched by the API are prepared from the records harvested in `datasetdb` by 3 Airflow DAGs in the [`dags/`](dags) folder, run by the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse) Airflow. They are chained through Airflow assets: each successful run triggers the next DAG. A task with nothing to hand over is skipped, which stops the pipeline there
 
-1. `populate_appdb_dataset` (manually triggered for now, on CRON schedule once deployed): turns the `datasetdb` records of type `Dataset` into the `dataset` table of `appdb`, one row per unique URL. Incremental from the last successful run, `full` re-reads everything and deletes the datasets whose record is gone.
-2. `generate_embeddings`: embeds the datasets new or changed since their last embedding into `dataset_embedding`, one named embedding per field. `title` and `keywords` get a single chunk 0, `description` is split in chunks. `full` re-embeds everything, e.g. after changing the model.
-3. `rebuild_indexes`: creates the missing indexes (BM25 per field with `pg_textsearch`, DiskANN per field with `pgvectorscale`, filters), then runs `ANALYZE`. Indexes are maintained on insert, so only the DiskANN indexes dropped before a full embeddings run (a graph grown from empty loses its recall) or new indexes get built. Trigger it with `rebuild` to also rebuild the existing ones with `REINDEX CONCURRENTLY`, search keeps working meanwhile.
+Changes in `dags/` are picked up directly, changes in `src/` need a restart of these 2 containers to reinstall the package (`docker compose restart airflow-dag-processor airflow-worker`).
 
-The pipeline code is in [`dags/search_pipeline`](dags/search_pipeline). The SQLAlchemy models of the tables and their indexes are in [`dataset_models.py`](src/data_commons_search/dataset_models.py), shared with the search query of the API in [`dataset_search.py`](src/data_commons_search/dataset_search.py): the module only imports SQLAlchemy and pgvector, so the Airflow worker can import it without installing the API dependencies. `appdb` needs the `pgvectorscale` and `pg_textsearch` extensions.
+Trigger the dags from the airflow web UI, or CLI:
 
-To load the DAGs in a local metadata-warehouse Airflow, mount `dags/` and `src/` and add them to the `PYTHONPATH` of the `airflow-dag-processor` and `airflow-worker` services in its `docker-compose.override.yml`. To build a local `appdb` (the postgres of the stack) from the records harvested on staging:
-
-```yaml
-    airflow-worker:
-        volumes:
-            - ../data-commons-search/dags:/opt/airflow/dags/data-commons-search
-            - ../data-commons-search/src:/opt/airflow/data-commons-search/src
-        env_file: [ keys.env ]
-        environment:
-            PYTHONPATH: /opt/airflow/warehouse:/opt/airflow/dags/data-commons-search:/opt/airflow/data-commons-search/src
-            POSTGRES_HOST: postgres
-            POSTGRES_PORT: "5432"
-            # The DAGs connect as the ingest role, and grant the search role its access to the tables
-            POSTGRES_APPDB_INGEST_USER: ${POSTGRES_APPDB_INGEST_USER}
-            POSTGRES_APPDB_INGEST_PASSWORD: ${POSTGRES_APPDB_INGEST_PASSWORD}
-            POSTGRES_APPDB_SEARCH_USER: ${POSTGRES_APPDB_SEARCH_USER}
-            POSTGRES_DB: appdb
-            # STAGING_POSTGRES_* defined in the metadata-warehouse .env
-            DATASETDB_DSN: host=${STAGING_POSTGRES_HOST} port=5432 dbname=datasetdb user=${STAGING_POSTGRES_USER} password=${STAGING_POSTGRES_PASSWORD}
-```
-
-Then run the whole pipeline for a few repositories: trigger `populate_appdb_dataset` with `{"full": true, "repositories": ["DASCH", "FINBIF"]}`, the two others follow.
 ```sh
-docker compose exec airflow-worker airflow dags test populate_appdb_dataset -c '{"full": true, "repositories": ["DASCH", "FINBIF"]}'
+docker compose exec airflow-worker airflow dags trigger populate_appdb_dataset -c '{"full": true, "repositories": ["DASCH", "FINBIF"]}'
 ```
 
 ### 🔐 Secrets Store

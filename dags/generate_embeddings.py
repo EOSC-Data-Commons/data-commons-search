@@ -10,6 +10,7 @@ from typing import Any
 
 from airflow.sdk import Param, dag, get_current_context, task
 from airflow.sdk.exceptions import AirflowSkipException
+
 from search_pipeline.assets import DATASET_TABLE, EMBEDDING_TABLE
 from search_pipeline.config import get_settings
 from search_pipeline.embeddings import generate_embeddings
@@ -28,7 +29,7 @@ from search_pipeline.embeddings import generate_embeddings
         "full": Param(
             False,
             type="boolean",
-            description="Re-embed every dataset, e.g. after changing the model. Drops the DiskANN indexes "
+            description="Re-embed every dataset, e.g. after changing the model. Drops the vector indexes "
             "during the load, rebuild_indexes recreates them",
         ),
         "batch_size": Param(64, type="integer", minimum=1, description="Texts per embeddings API request"),

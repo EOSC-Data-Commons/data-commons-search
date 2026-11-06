@@ -1,6 +1,7 @@
 """Pipeline settings, read from the environment of the airflow worker.
 
-The same POSTGRES_* variables as the search API, so one env file configures both. Each DB can be
+The same POSTGRES_* variables as the search API for the server and roles, but the appdb name is
+APPDB_NAME: the metadata-warehouse workers already set POSTGRES_DB to its datasetdb. Each DB can be
 pointed somewhere else with a full DSN (e.g. read the staging datasetdb, write a local appdb).
 """
 
@@ -22,7 +23,7 @@ class PipelineSettings:
     # The DAGs connect as the ingest role: reads the warehouse databases, owns and writes the appdb tables
     postgres_appdb_ingest_user: str = field(default_factory=lambda: _env("POSTGRES_APPDB_INGEST_USER", "appdb_ingest"))
     postgres_appdb_ingest_password: str = field(default_factory=lambda: _env("POSTGRES_APPDB_INGEST_PASSWORD"))
-    appdb_name: str = field(default_factory=lambda: _env("POSTGRES_DB", "appdb"))
+    appdb_name: str = field(default_factory=lambda: _env("APPDB_NAME", "appdb"))
     datasetdb_name: str = field(default_factory=lambda: _env("DATASETDB_NAME", "datasetdb"))
     # Optional full DSNs, override the POSTGRES_* above for one database
     appdb_dsn: str = field(default_factory=lambda: _env("APPDB_DSN"))

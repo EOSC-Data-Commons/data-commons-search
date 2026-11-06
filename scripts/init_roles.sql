@@ -16,8 +16,9 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'search_user') \gexec
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'ingest_user', :'ingest_password')
 WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'ingest_user') \gexec
 
--- Extensions of the search tables (dataset_models.py), vectorscale needs a superuser
-CREATE EXTENSION IF NOT EXISTS vectorscale CASCADE;
+-- Extensions of the search tables (dataset_models.py), vchord needs a superuser and must be in
+-- shared_preload_libraries. CASCADE also creates pgvector (vector type)
+CREATE EXTENSION IF NOT EXISTS vchord CASCADE;
 CREATE EXTENSION IF NOT EXISTS pg_textsearch;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
