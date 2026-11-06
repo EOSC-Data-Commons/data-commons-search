@@ -309,9 +309,9 @@ def clean_dates(dates: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Dates are already normalized to yyyy-mm-dd by the warehouse, drop anything else."""
     cleaned = []
     for d in dates:
-        value = clean_text(d.get("date"))
+        value = clean_text(d.get("date")) or ""
         try:
-            date.fromisoformat(value or "")
+            date.fromisoformat(value)
         except ValueError:
             continue
         cleaned.append({"date": value, "type": clean_text(d.get("dateType")) or "Other"})
@@ -365,7 +365,7 @@ def build_dataset(record: dict[str, Any]) -> Dataset:
     dates = clean_dates(entries(datacite, "dates"))
     pub_date = pick_publication_date(dates, parse_year(datacite.get("publicationYear")))
     languages = sorted({code for e in [*titles, *descriptions, *subjects] if (code := lang(e))})
-    formats = datacite.get("formats") if isinstance(datacite.get("formats"), list) else []
+    formats = value if isinstance(value := datacite.get("formats"), list) else []
     return Dataset(
         url=url,
         doi=doi,

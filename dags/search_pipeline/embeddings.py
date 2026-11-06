@@ -23,7 +23,7 @@ from sqlalchemy import Connection, bindparam, delete, func, insert, select, text
 from sqlalchemy.schema import DropIndex
 
 from data_commons_search.config import settings as api_settings
-from data_commons_search.dataset_models import SEARCH_FIELDS, Dataset, DatasetEmbedding, is_diskann, search_indexes
+from data_commons_search.dataset_models import SEARCH_FIELDS, Dataset, DatasetEmbedding, is_vector_index, search_indexes
 from search_pipeline.config import PipelineSettings
 from search_pipeline.db import appdb_engine
 
@@ -236,7 +236,6 @@ class EmbeddingClient:
 
 # ---------- Generate and store ----------
 
-embeddings = DatasetEmbedding.__table__
 # Only mark the datasets left untouched while their page was embedded, a dataset updated in between
 # by the transform stays in the queue
 MARK_EMBEDDED = (
@@ -257,10 +256,10 @@ class EmbeddingStats:
 
 
 def reset_embeddings(appdb: Connection, dimensions: int) -> None:
-    """Empty the table before a full run. The DiskANN indexes are dropped so the bulk load does not
-    grow the graphs one insert at a time (destroys recall), rebuild_indexes recreates them."""
+    """Empty the table before a full run. The vector indexes are dropped during the bulk load, their
+    clusters must be computed from the new vectors, rebuild_indexes recreates them."""
     with appdb.begin():
-        for index in filter(is_diskann, search_indexes()):
+        for index in filter(is_vector_index, search_indexes()):
             appdb.execute(DropIndex(index, if_exists=True))
         appdb.execute(text("TRUNCATE dataset_embedding"))
         # Lets a full run switch to a model with another number of dimensions
@@ -272,8 +271,8 @@ def reset_embeddings(appdb: Connection, dimensions: int) -> None:
 def store_page(appdb: Connection, records: list[RecordEmbeddings], updated_at: dict[int, datetime]) -> None:
     """Replace the embeddings of a page of datasets and take them out of the queue, in one transaction."""
     with appdb.begin():
-        appdb.execute(delete(embeddings).where(embeddings.c.dataset_id.in_([r.dataset_id for r in records])))
-        appdb.execute(insert(embeddings), [row for r in records for row in r.rows()])
+        appdb.execute(delete(DatasetEmbedding).where(DatasetEmbedding.dataset_id.in_([r.dataset_id for r in records])))
+        appdb.execute(insert(DatasetEmbedding), [row for r in records for row in r.rows()])
         appdb.execute(
             MARK_EMBEDDED, [{"dataset_id": r.dataset_id, "read_updated_at": updated_at[r.dataset_id]} for r in records]
         )

@@ -52,6 +52,11 @@ agent = [
     # "langchain-litellm >=0.3.5",
     "langfuse >=4.6.1",
 ]
+# Deps of the search pipeline DAGs in dags/, installed in the metadata-warehouse Airflow image
+pipeline = [
+    "requests >=2.32.5",
+    "tokenizers >=0.22.1",
+]
 # gpu = ["fastembed-gpu >=0.7.4"]
 
 [dependency-groups]
@@ -99,9 +104,18 @@ addopts = [
     "--color=yes",
     "--cov-report=term-missing",
 ]
+# Airflow puts the DAG bundle folder on the path, the tests import search_pipeline the same way
+pythonpath = ["dags"]
 
 [tool.ty.src]
-include = ["src"]
+include = ["src", "dags"]
+
+[tool.ty.environment]
+root = ["src", "dags"]
+
+[tool.ty.analysis]
+# Provided by the Airflow image that runs the DAGs, not a dependency of this package
+allowed-unresolved-imports = ["airflow.**"]
 
 [tool.ty.terminal]
 output-format = "full"
@@ -118,6 +132,7 @@ disable_error_code = ["prop-decorator"]
 [tool.ruff]
 target-version = "py310"
 line-length = 120
+src = ["src", "dags"]
 exclude = [
     "**/__init__.py",
 ]

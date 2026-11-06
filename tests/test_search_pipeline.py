@@ -1,13 +1,8 @@
 """Unit tests of the search pipeline code in dags/search_pipeline (no database needed)."""
 
-import sys
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 import pytest
-
-# The DAGs folder is not a package of this project, airflow puts it on the path
-sys.path.insert(0, str(Path(__file__).parents[1] / "dags"))
 
 from search_pipeline.embeddings import RecordEmbeddings, split_text
 from search_pipeline.transform import SkipRecordError, build_dataset, normalize_doi

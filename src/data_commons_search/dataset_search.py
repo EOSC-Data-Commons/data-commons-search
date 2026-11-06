@@ -2,8 +2,8 @@
 
 One SQL statement retrieves a candidate list per (method, field):
 
-- semantic: cosine similarity of the query to the named embeddings of each field (pgvectorscale
-  DiskANN, one partial index per field in `dataset_embedding`)
+- semantic: cosine similarity of the query to the named embeddings of each field (VectorChord
+  vchordrq, one partial index per field in `dataset_embedding`)
 - lexical: BM25 on each field of `dataset` (pg_textsearch, one index per field)
 
 Each list is min-max normalized over its own candidates, then the lists are combined with
@@ -77,7 +77,7 @@ def _semantic_list(field: str, filtered: CTE | None) -> Select[Any]:
             .order_by(score.desc())
             .limit(POOL)
         )
-    # ORDER BY distance LIMIT is what the DiskANN partial index of the field serves
+    # ORDER BY distance LIMIT is what the vchordrq partial index of the field serves
     chunks = (
         select(DatasetEmbedding.dataset_id, (1 - distance).label("score"))
         .where(DatasetEmbedding.field == field)
