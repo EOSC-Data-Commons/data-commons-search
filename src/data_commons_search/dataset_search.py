@@ -77,10 +77,11 @@ def _semantic_list(field: str, filtered: CTE | None) -> Select[Any]:
             .order_by(score.desc())
             .limit(POOL)
         )
-    # ORDER BY distance LIMIT is what the vchordrq partial index of the field serves
+    # ORDER BY distance LIMIT is what the vchordrq partial index of the field serves. The field is
+    # rendered inline, not bound: a generic plan of a prepared statement cannot match the partial index
     chunks = (
         select(DatasetEmbedding.dataset_id, (1 - distance).label("score"))
-        .where(DatasetEmbedding.field == field)
+        .where(DatasetEmbedding.field == literal(field, literal_execute=True))
         .order_by(distance)
         .limit(POOL)
         .subquery()
