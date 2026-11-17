@@ -1,10 +1,8 @@
-"""Shared pytest configuration and fixtures."""
+"""Shared pytest helpers. The DB fixtures live in test_db.py, so the unit tests never touch postgres."""
 
-import pytest
 from sqlalchemy import text
 
 import data_commons_search.db as db_module
-from data_commons_search.db_models import Base
 
 
 def postgres_available() -> bool:
@@ -15,18 +13,3 @@ def postgres_available() -> bool:
         return True
     except Exception:
         return False
-
-
-@pytest.fixture(scope="session", autouse=True)
-def create_tables():
-    """Create all ORM tables once per test session."""
-    Base.metadata.create_all(bind=db_module.engine)
-    yield
-
-
-@pytest.fixture(autouse=True)
-def clean_tables():
-    """Delete all rows after each test (cascade handles child tables)."""
-    yield
-    with db_module.SessionLocal.begin() as session:
-        session.execute(text("DELETE FROM users"))

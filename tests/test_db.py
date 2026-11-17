@@ -3,27 +3,52 @@
 from typing import Any, Literal
 
 import pytest
+from sqlalchemy import create_engine, delete
 
+from data_commons_search.config import settings
 from data_commons_search.db import (
+    SessionLocal,
     get_conversation,
     get_conversations,
     make_conversation_label,
     store_messages,
 )
+from data_commons_search.db_models import Base, User
 from data_commons_search.models import MessageItem, TextPart, ToolCallItem, ToolResultItem, UserInfo
 from tests.conftest import postgres_available
 
 pytestmark = pytest.mark.skipif(not postgres_available(), reason="PostgreSQL not reachable")
 
+# Only these users are created and deleted, the other rows of the configured appdb are left alone
+TEST_USER_SUBS = ("test-user-001", "test-user-002")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def create_tables():
+    """Create the missing API tables as the ingest role, the search role of the API cannot."""
+    ingest_engine = create_engine(settings.appdb_ingest_url)
+    try:
+        Base.metadata.create_all(bind=ingest_engine)
+    finally:
+        ingest_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def clean_tables():
+    """Delete the test users after each test, their conversations and messages cascade."""
+    yield
+    with SessionLocal.begin() as session:
+        session.execute(delete(User).where(User.sub.in_(TEST_USER_SUBS)))
+
 
 @pytest.fixture()
 def user():
-    return UserInfo(sub="user-001", email="test@example.com", name="Test User", preferred_username="testuser")
+    return UserInfo(sub=TEST_USER_SUBS[0], email="test@example.com", name="Test User", preferred_username="testuser")
 
 
 @pytest.fixture()
 def other_user():
-    return UserInfo(sub="user-002", email="other@example.com", name="Other User")
+    return UserInfo(sub=TEST_USER_SUBS[1], email="other@example.com", name="Other User")
 
 
 def msg(role: Literal["system", "user", "assistant"] = "user", text: str = "Hello") -> MessageItem:
