@@ -8,7 +8,7 @@ pointed somewhere else with a full DSN (e.g. read the staging datasetdb, write a
 import os
 from dataclasses import dataclass, field
 
-from psycopg2.extensions import make_dsn
+from psycopg.conninfo import make_conninfo
 
 
 def _env(name: str, default: str = "") -> str:
@@ -43,7 +43,7 @@ class PipelineSettings:
 
     def dsn(self, db_name: str) -> str:
         """libpq connection string for a database on the POSTGRES_* server, its values quoted."""
-        return make_dsn(
+        return make_conninfo(
             host=self.postgres_host,
             port=self.postgres_port,
             dbname=db_name,

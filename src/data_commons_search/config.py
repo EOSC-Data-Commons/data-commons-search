@@ -170,7 +170,7 @@ class Settings(BaseSettings):
 
     def postgres_url_for(self, db_name: str, user: str, password: str) -> URL:
         """PostgreSQL URL of `db_name` on the configured server, the password escaped."""
-        return URL.create("postgresql", user, password, self.postgres_host, self.postgres_port, db_name)
+        return URL.create("postgresql+psycopg", user, password, self.postgres_host, self.postgres_port, db_name)
 
     @property
     def server_url(self) -> str:
