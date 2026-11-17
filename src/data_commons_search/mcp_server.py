@@ -18,7 +18,7 @@ from data_commons_search.zenodo import ZENODO_REPO, search_zenodo_datasets
 mcp = FastMCP(
     name="EOSC Data Commons MCP",
     debug=settings.debug_enabled,
-    dependencies=["mcp", "httpx", "sqlalchemy", "psycopg2-binary", "pydantic"],
+    dependencies=["mcp", "httpx", "sqlalchemy", "psycopg[binary]", "pydantic"],
     instructions="Provide tools that helps users access data from various open-access data publishers, developed for the EOSC Data Commons project.",
     json_response=True,
     stateless_http=True,

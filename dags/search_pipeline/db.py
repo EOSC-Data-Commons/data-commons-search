@@ -2,7 +2,7 @@
 
 from typing import Any
 
-import psycopg2
+import psycopg
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.pool import NullPool
 
@@ -13,9 +13,9 @@ def _engine(dsn: str, options: str = "") -> Engine:
     """Engine on a libpq DSN. A task is a short lived process, no point in pooling."""
 
     def connect() -> Any:
-        return psycopg2.connect(dsn, options=options or None, application_name="search_pipeline")
+        return psycopg.connect(dsn, options=options or None, application_name="search_pipeline")
 
-    return create_engine("postgresql+psycopg2://", creator=connect, poolclass=NullPool)
+    return create_engine("postgresql+psycopg://", creator=connect, poolclass=NullPool)
 
 
 def datasetdb_engine(settings: PipelineSettings) -> Engine:
