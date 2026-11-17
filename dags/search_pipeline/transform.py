@@ -70,7 +70,9 @@ DATACITE_KEYS = (
     "doi",
     "url",
 )
-# datasetdb belongs to the warehouse, no model for it
+# datasetdb belongs to the warehouse, no model for it. Each repository is read from its own `since`
+# bound (all its records when it has none), the global :min_since lets the BRIN index on updated_at skip
+# the old blocks when every repository has a bound
 SELECT_RECORDS_SQL = text(f"""
 SELECT
     rec.id, rec.url, rec.title, rec.updated_at,
@@ -79,11 +81,16 @@ SELECT
 FROM records rec
 JOIN repositories repo ON repo.id = rec.repository_id
 JOIN endpoints endp ON endp.id = rec.endpoint_id
+LEFT JOIN unnest(CAST(:since_codes AS text[]), CAST(:since_dates AS timestamptz[])) AS since(code, updated_at)
+    ON since.code = repo.code
 WHERE rec.resource_type::text = ANY(:resource_types)
   AND rec.datacite_json IS NOT NULL
-  AND (CAST(:since AS timestamptz) IS NULL OR rec.updated_at > CAST(:since AS timestamptz))
-  AND (CAST(:repositories AS text[]) IS NULL OR repo.code = ANY(CAST(:repositories AS text[])))
+  AND repo.code = ANY(CAST(:codes AS text[]))
+  AND (since.updated_at IS NULL OR rec.updated_at > since.updated_at)
+  AND (CAST(:min_since AS timestamptz) IS NULL OR rec.updated_at > CAST(:min_since AS timestamptz))
 """)  # noqa: S608
+# Start of the read on the datasetdb clock (transaction start, before the records snapshot), and the repository codes
+SELECT_REPOSITORIES_SQL = text("SELECT now() AS read_started, array_agg(code ORDER BY code) AS codes FROM repositories")
 
 # Columns set by the transform, the others are generated or managed by the pipeline
 MANAGED_COLUMNS = ("created_at", "updated_at", "embedded_at")
@@ -149,6 +156,9 @@ class TransformStats:
     duplicates: int = 0
     deleted: int = 0
     skipped: Counter[str] = field(default_factory=Counter)
+    # Repositories read and when the read started, their next `since` once the run completed (not in as_dict)
+    repositories: list[str] = field(default_factory=list)
+    read_started: datetime | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -407,11 +417,10 @@ def upsert(appdb: Connection, rows: list[Dataset], stats: TransformStats) -> Non
     stats.unchanged += len(by_url) - len(results)
 
 
-def has_datasets(settings: PipelineSettings, repositories: list[str] | None = None) -> bool:
-    """Whether the dataset table holds any row, from the given repositories only when given."""
-    condition = Dataset.repository.in_(repositories) if repositories else Dataset.id.is_not(None)
+def has_datasets(settings: PipelineSettings) -> bool:
+    """Whether the dataset table holds any row."""
     with appdb_engine(settings).connect() as appdb:
-        return bool(appdb.execute(select(exists().where(condition))).scalar())
+        return bool(appdb.execute(select(exists().where(Dataset.id.is_not(None)))).scalar())
 
 
 def prune(appdb: Connection, seen_urls: set[str], repositories: list[str] | None = None) -> int:
@@ -440,28 +449,44 @@ def refresh_creator_names(settings: PipelineSettings) -> None:
 
 def populate_appdb_dataset(
     settings: PipelineSettings,
-    since: datetime | None = None,
+    since: dict[str, datetime] | None = None,
     limit: int | None = None,
     repositories: list[str] | None = None,
 ) -> TransformStats:
-    """Upsert the datasets of the records updated after `since` (all of them when None), from the
-    given repository codes only (all repositories when None).
+    """Upsert the datasets of the records of each repository updated after its `since` date (all
+    its records when it has none), from the given repository codes only (all repositories when None).
 
     A full run (no `since`, no `limit`) also deletes the datasets whose record no longer exists.
-    Each batch is committed on its own, a failed run is resumed by the next one since `since`
-    comes from the last successful run.
+    Each batch is committed on its own. `stats.read_started` is the next `since` of
+    `stats.repositories`, to save only once the run completed without `limit`.
     """
+    since = since or {}
     stats = TransformStats()
     seen_urls: set[str] = set()
-    logger.info(
-        f"Transforming the datasetdb records of {repositories or 'all repositories'} "
-        f"updated after {since or 'the beginning'}"
-    )
     with datasetdb_engine(settings).connect() as datasetdb, appdb_engine(settings).connect() as appdb:
+        # Same transaction as the records read below, now() is the start of its snapshot
+        read_started, all_codes = datasetdb.execute(SELECT_REPOSITORIES_SQL).one()
+        stats.read_started = read_started
+        stats.repositories = [c for c in all_codes or [] if not repositories or c in repositories]
+        if unknown := set(repositories or []) - set(stats.repositories):
+            logger.warning(f"Unknown repository codes, ignored: {sorted(unknown)}")
+        # The global bound only applies when every repository has its own
+        bounds = [since.get(code) for code in stats.repositories]
+        min_since = min((b for b in bounds if b), default=None) if all(bounds) else None
+        logger.info(
+            f"Transforming the datasetdb records of {repositories or 'all repositories'}, "
+            f"updated after {min_since or 'the beginning'} at the earliest"
+        )
         # Server side cursor, the records do not fit in memory
         records = datasetdb.execution_options(stream_results=True, max_row_buffer=READ_BATCH_SIZE).execute(
             SELECT_RECORDS_SQL,
-            {"resource_types": list(RESOURCE_TYPES), "since": since, "repositories": repositories or None},
+            {
+                "resource_types": list(RESOURCE_TYPES),
+                "codes": stats.repositories,
+                "since_codes": list(since),
+                "since_dates": list(since.values()),
+                "min_since": min_since,
+            },
         )
         for batch in records.mappings().partitions(READ_BATCH_SIZE):
             rows = []
@@ -477,8 +502,9 @@ def populate_appdb_dataset(
             if limit and stats.read >= limit:
                 break
         records.close()
-        # Guard against wiping the table when the source returned nothing
-        if since is None and not limit and seen_urls:
+        # Only when every selected repository was read in full. Guard against wiping the table when
+        # the source returned nothing
+        if not any(bounds) and not limit and seen_urls:
             stats.deleted = prune(appdb, seen_urls, repositories)
     if stats.inserted or stats.updated or stats.deleted:
         refresh_creator_names(settings)

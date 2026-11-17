@@ -1,9 +1,16 @@
 # Shutdown and reset the metadata warehouse database
+set -e
 
 cd ../metadata-warehouse
 docker compose down --volumes --remove-orphans
-docker compose up broker transform airflow-apiserver airflow-scheduler airflow-dag-processor airflow-worker -d
+# Postgres first, waiting for its healthcheck so create_db.py can connect, then the rest of the services
+docker compose up postgres -d --wait
+docker compose up broker transform airflow-api-server airflow-scheduler airflow-dag-processor airflow-worker -d
 
+# Warehouse databases first: init_roles.sql only grants the ingest role access to the ones that exist
+for db in datasetdb filedb tooldb; do
+  uv run --directory scripts/postgres_data create_db.py --db "$db"
+done
 uv run --directory scripts/postgres_data create_db.py --db appdb --reset
 
 # Create the roles (passwords from keys.env), their grants and the extensions as the warehouse admin
