@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from data_commons_search.config import settings
 from data_commons_search.dataset_search import search_datasets
 from data_commons_search.embeddings import embed_texts, rerank
-from data_commons_search.models import FileMetrixFilesResponse, SearchHit, SearchResults, UserInfo
+from data_commons_search.models import FileMetrixFilesResponse, SearchFilters, SearchHit, SearchResults, UserInfo
 from data_commons_search.utils import Timer, logger, timed
 from data_commons_search.zenodo import ZENODO_REPO, search_zenodo_datasets
 
@@ -143,6 +143,10 @@ async def search_data(
     start_date: str | None = None,
     end_date: str | None = None,
     creator_name: str | None = None,
+    subjects: list[str] | None = None,
+    repositories: list[str] | None = None,
+    published_after: str | None = None,
+    published_before: str | None = None,
 ) -> SearchResults:
     """Search for datasets relevant to the user question.
 
@@ -151,9 +155,15 @@ async def search_data(
         user_question: The user's question, copied as asked (only fix typos and make it standalone).
             Used to rank the results
         limit: Number of datasets to return
-        start_date: Optional start date in yyyy-MM-dd
-        end_date: Optional end date in yyyy-MM-dd
-        creator_name: Optional creator name to filter by
+        start_date: Optional start of the period the data should cover, yyyy-MM-dd. Ranks the datasets
+            covering it higher, without excluding the others
+        end_date: Optional end of the period the data should cover, yyyy-MM-dd
+        creator_name: Optional creator name (person or organization) to filter by, typos tolerated
+        subjects: Optional subject names, only datasets with at least one of them (exact name, case and
+            accents ignored). Only for an explicit topic restriction, the search inputs already match topics
+        repositories: Optional repository codes (e.g. ZENODO), only datasets harvested from one of them
+        published_after: Optional, only datasets published on or after this date, yyyy-MM-dd
+        published_before: Optional, only datasets published on or before this date, yyyy-MM-dd
 
     Returns:
         The `limit` most relevant datasets (total_found, hits[]) across all search inputs
@@ -165,15 +175,22 @@ async def search_data(
     if not queries:
         return SearchResults(total_found=0, hits=[])
     limit = max(1, min(limit, MAX_RESULTS_COUNT))
+    filters = SearchFilters(
+        start_date=start_date,
+        end_date=end_date,
+        creator_name=creator_name,
+        subjects=subjects or [],
+        repositories=repositories or [],
+        published_after=published_after,
+        published_before=published_before,
+    )
     # Per-stage durations filled in by the helpers below, then logged as one breakdown. Search inputs
     # run concurrently, so each backend reports its slowest input: what that stage cost in wall clock.
     timings: dict[str, float] = {}
     with Timer() as t_total:
         # Each input retrieves `limit` hits from our index plus `limit` from Zenodo, concurrently. All
         # those lists are then merged into one deduplicated pool and reranked down to `limit` results.
-        results = await asyncio.gather(
-            *(_search_data_one(q, limit, start_date, end_date, creator_name, timings) for q in queries)
-        )
+        results = await asyncio.gather(*(_search_data_one(q, limit, filters, timings) for q in queries))
         pool = _merge_dedup([res for per_input in results for res in per_input])
         final = await _rerank_hits(_rerank_query(user_question, queries), pool, limit, timings)
     logger.info(
@@ -187,9 +204,7 @@ async def search_data(
 async def _search_data_one(
     search_input: str,
     limit: int,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    creator_name: str | None = None,
+    filters: SearchFilters,
     timings: dict[str, float] | None = None,
 ) -> list[SearchResults]:
     """Run the hybrid dataset search for a single search term, one result list per backend queried.
@@ -201,11 +216,13 @@ async def _search_data_one(
         if timings is not None:
             timings[stage] = max(timings.get(stage, 0.0), ms)
 
-    # ZENODO FEDERATION - started first so it runs while we embed and query postgres.
+    # ZENODO FEDERATION - started first so it runs while we embed and query postgres. Skipped when the
+    # repositories filter leaves Zenodo out
+    with_zenodo = settings.zenodo_search_enabled and (
+        not filters.repositories or "ZENODO" in (code.strip().upper() for code in filters.repositories)
+    )
     zenodo_task = (
-        asyncio.create_task(timed(search_zenodo_datasets(search_input, limit, start_date, end_date, creator_name)))
-        if settings.zenodo_search_enabled
-        else None
+        asyncio.create_task(timed(search_zenodo_datasets(search_input, limit, filters))) if with_zenodo else None
     )
 
     with Timer() as t_embed:
@@ -214,7 +231,7 @@ async def _search_data_one(
 
     with Timer() as t_search:
         try:
-            res = await search_datasets(search_input, embedding, limit, start_date, end_date, creator_name)
+            res = await search_datasets(search_input, embedding, limit, filters)
         except Exception as e:
             logger.error(f"Postgres dataset search failed: {e}")
             # Degrade to no local hits rather than returning early, so a Zenodo result set still

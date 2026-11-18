@@ -666,18 +666,30 @@ async def search_endpoint(
     start_date: str | None = Query(None, description="Only for datasets: start date in yyyy-MM-dd"),
     end_date: str | None = Query(None, description="Only for datasets: end date in yyyy-MM-dd"),
     creator_name: str | None = Query(None, description="Only for datasets: creator name to filter by"),
+    subjects: list[str] | None = Query(None, description="Only for datasets: any of these subject names"),
+    repositories: list[str] | None = Query(None, description="Only for datasets: any of these repository codes"),
+    published_after: str | None = Query(None, description="Only for datasets: published on or after, yyyy-MM-dd"),
+    published_before: str | None = Query(None, description="Only for datasets: published on or before, yyyy-MM-dd"),
     user: UserInfo | None = Depends(optional_auth),
 ) -> SearchResults:
     """Search datasets or tools directly, without going through the chat agent.
 
     Calls the very same functions as the `search_data` / `search_tools` MCP tools, so results are
-    identical to what the agent sees. The date and creator filters only apply to datasets.
+    identical to what the agent sees. The filters only apply to datasets.
     """
     await rate_limiter.check(request, user)
     if resource == "tools":
         return await search_tools(q)
     return await search_data(
-        q, user_question=" | ".join(q), start_date=start_date, end_date=end_date, creator_name=creator_name
+        q,
+        user_question=" | ".join(q),
+        start_date=start_date,
+        end_date=end_date,
+        creator_name=creator_name,
+        subjects=subjects,
+        repositories=repositories,
+        published_after=published_after,
+        published_before=published_before,
     )
 
 

@@ -65,6 +65,17 @@ RETURN (
     WHERE word <> ''
 )
 """
+# Comparable form of the subject names of a dataset (lowercase, no accents), for the subject filter:
+# `subject_keys(subjects) && subject_keys(:requested)` matches any of the requested subjects, on the
+# GIN index of this expression
+SUBJECT_KEYS_DDL = """
+CREATE OR REPLACE FUNCTION subject_keys(items jsonb)
+RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE
+RETURN (
+    SELECT array_agg(DISTINCT lower(public.unaccent('public.unaccent'::regdictionary, item ->> 'name')))
+    FROM jsonb_array_elements(items) AS item
+)
+"""
 
 # One row per distinct creator name of `dataset.creators`, with the datasets it created: the fuzzy
 # creator filter finds the names closest to the requested one (trigram distance on `key`, typos
@@ -237,6 +248,15 @@ class DatasetEmbedding(Base):
         ),
         {"comment": "Embeddings of the searched fields of each dataset, one row per text chunk"},
     )
+
+
+# Subject filter, on an expression the model cannot declare in its own table args
+Index(
+    "dataset_subject_keys_idx",
+    func.subject_keys(Dataset.subjects, type_=ARRAY(Text)),
+    postgresql_using="gin",
+    info=DEFERRED,
+)
 
 
 def search_indexes() -> list[Index]:

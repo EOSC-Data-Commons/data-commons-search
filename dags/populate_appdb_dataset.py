@@ -85,6 +85,7 @@ def populate_appdb_dataset_dag() -> None:
             # Functions used by the generated columns and the view
             conn.execute(text(dataset_models.JSONB_ARRAY_JOIN_DDL))
             conn.execute(text(dataset_models.CREATOR_KEY_DDL))
+            conn.execute(text(dataset_models.SUBJECT_KEYS_DDL))
             db_models.Base.metadata.create_all(conn)
             dataset_models.Base.metadata.create_all(conn)
             for ddl in dataset_models.CREATOR_NAME_DDL:
