@@ -168,6 +168,8 @@ class SearchHitSrc(BaseModel):
     url: str | None = None
     harvest_url: str | None = Field(None, alias="_harvest_url")
     repo: str | None = Field(None, alias="_repo")
+    record_identifier: str | None = Field(None, alias="_record_identifier")
+    # OAI-PMH record identifier, the key of the record's files in filedb (together with `_harvest_url`).
     titles: list[SearchHitSrcTitle] = Field(default_factory=list)
     descriptions: list[SearchHitSrcDescription] = Field(default_factory=list)
     publication_year: str | None = Field(None, alias="publicationYear")
