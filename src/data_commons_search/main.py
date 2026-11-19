@@ -5,7 +5,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any
 
@@ -89,7 +89,7 @@ rate_limiter = RateLimiter()
 
 
 @contextlib.asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan that initializes the MCP session manager."""
     init_postgres_storage()
     async with mcp.session_manager.run():
