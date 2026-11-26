@@ -318,6 +318,7 @@ async def _search_data_one(
             "creators",
             "_harvest_url",
             "_repo",
+            "_record_identifier",
         ],
         "query": {
             "hybrid": {
