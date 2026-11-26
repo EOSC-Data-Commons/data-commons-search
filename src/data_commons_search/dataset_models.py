@@ -4,9 +4,12 @@ Written by the DAGs in `dags/` (search_pipeline), queried by the API in dataset_
 imports SQLAlchemy and pgvector, not the app settings, so the airflow worker can import it without the API deps.
 
 `Dataset` is the source of truth for the API: one row per dataset, cleaned up from the DataCite
-JSON harvested in datasetdb. List fields are JSONB arrays of objects (e.g. a creator carries its
-own identifiers), the flat text the search needs is derived from them by generated columns, and
-the creator names by the `creator_name` materialized view (fuzzy creator filter).
+JSON harvested in datasetdb. Its lists live in their own tables, written by the transform:
+`Repository` (`dataset.harvested_from` is the one of the record the dataset was built from), `Agent` (creators, one per ORCID, ROR or name, searched by their `AgentName`) and
+`Subject`, linked to the datasets by `DatasetAgent` and `DatasetSubject`, and `DatasetDate`. The link
+rows keep what the record wrote (name, identifiers, subject scheme). Only the lists nothing queries
+yet stay JSONB arrays (`descriptions`, `rights`). `DatasetRecord` lists the records of each dataset:
+the repositories it was found in, with its identifier there.
 
 `DatasetEmbedding` holds one vector per text chunk of each searched field of a dataset (see
 dags/search_pipeline/embeddings.py).
@@ -16,6 +19,7 @@ the rebuild_indexes DAG builds them after a bulk load. The VectorChord clusters 
 the rows present when the index is built, and BM25 also builds faster in one pass.
 """
 
+import datetime as dt
 import os
 from datetime import date, datetime
 from typing import Any
@@ -31,9 +35,7 @@ from sqlalchemy import (
     Index,
     SmallInteger,
     Text,
-    column,
     func,
-    table,
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -47,17 +49,11 @@ EMBED_DIMENSIONS = int(os.environ.get("EMBED_DIMENSIONS", "768"))
 # Marks the indexes built by rebuild_indexes instead of `create_all`
 DEFERRED = {"deferred": True}
 
-# Join one key of a JSONB array of objects, used by the generated text columns. Created before the tables
-JSONB_ARRAY_JOIN_DDL = """
-CREATE OR REPLACE FUNCTION jsonb_array_join(items jsonb, key text, sep text DEFAULT ', ')
-RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
-RETURN (SELECT string_agg(item ->> key, sep) FROM jsonb_array_elements(items) AS item)
-"""
-# Comparable form of a person or organization name: lowercase, no accents, words sorted, so
-# "Ionita, Monica" and "Monica Ionita" get the same key. IMMUTABLE (unaccent with an explicit
-# dictionary is) so a query on creator_key(:name) is computed once and uses the index
-CREATOR_KEY_DDL = """
-CREATE OR REPLACE FUNCTION creator_key(name text)
+# Comparable form of the name of a person or organization: lowercase, no accents, words sorted, so
+# "Ionita, Monica" and "Monica Ionita" get the same key. IMMUTABLE (unaccent with an explicit dictionary
+# is) so it can make generated columns, and a query on name_key(:name) is computed once and uses the index
+NAME_KEY_DDL = """
+CREATE OR REPLACE FUNCTION name_key(name text)
 RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
 RETURN (
     SELECT string_agg(word, ' ' ORDER BY word)
@@ -65,35 +61,15 @@ RETURN (
     WHERE word <> ''
 )
 """
-# Comparable form of the subject names of a dataset (lowercase, no accents), for the subject filter:
-# `subject_keys(subjects) && subject_keys(:requested)` matches any of the requested subjects, on the
-# GIN index of this expression
-SUBJECT_KEYS_DDL = """
-CREATE OR REPLACE FUNCTION subject_keys(items jsonb)
-RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE
-RETURN (
-    SELECT array_agg(DISTINCT lower(public.unaccent('public.unaccent'::regdictionary, item ->> 'name')))
-    FROM jsonb_array_elements(items) AS item
-)
+# Comparable form of a subject name: lowercase, no accents. Punctuation and word order are kept, they
+# tell subjects apart ("C", "C++" and "C#")
+SUBJECT_KEY_DDL = """
+CREATE OR REPLACE FUNCTION subject_key(name text)
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
+RETURN lower(public.unaccent('public.unaccent'::regdictionary, name))
 """
-
-# One row per distinct creator name of `dataset.creators`, with the datasets it created: the fuzzy
-# creator filter finds the names closest to the requested one (trigram distance on `key`, typos
-# and word order tolerated), then their datasets. Refreshed by the transform after each change, the
-# unique index on name lets it refresh CONCURRENTLY (readable meanwhile)
-CREATOR_NAME_DDL = (
-    """CREATE MATERIALIZED VIEW IF NOT EXISTS creator_name AS
-SELECT creator ->> 'name' AS name, creator_key(creator ->> 'name') AS key, array_agg(DISTINCT dataset.id) AS dataset_ids
-FROM dataset, jsonb_array_elements(dataset.creators) AS creator
-WHERE creator_key(creator ->> 'name') IS NOT NULL
-GROUP BY creator ->> 'name'""",
-    "CREATE UNIQUE INDEX IF NOT EXISTS creator_name_name_idx ON creator_name (name)",
-    "CREATE INDEX IF NOT EXISTS creator_name_key_idx ON creator_name USING gist (key gist_trgm_ops)",
-)
-# Queried with SQLAlchemy Core, the view is created by the DDL above and not by the metadata
-creator_name_view = table(
-    "creator_name", column("name", Text), column("key", Text), column("dataset_ids", ARRAY(BigInteger))
-)
+# Functions used by the generated columns, created before the tables
+FUNCTIONS_DDL = (NAME_KEY_DDL, SUBJECT_KEY_DDL)
 
 
 def bm25_index_name(field: str) -> str:
@@ -139,22 +115,22 @@ class Dataset(Base):
     description: Mapped[str | None]
     # [{"text", "type", "lang"}], all the cleaned descriptions, translations and notes included
     descriptions: Mapped[list[dict[str, Any]]] = mapped_column(server_default=text("'[]'"))
-    # [{"name", "scheme", "uri"}]
-    subjects: Mapped[list[dict[str, Any]]] = mapped_column(server_default=text("'[]'"))
-    # [{"name", "given_name", "family_name", "type", "identifiers": [{"scheme", "value"}]}]
-    creators: Mapped[list[dict[str, Any]]] = mapped_column(server_default=text("'[]'"))
-    # [{"date": "yyyy-mm-dd", "type"}], type from DataCite (Issued, Collected, Coverage...)
-    dates: Mapped[list[dict[str, Any]]] = mapped_column(server_default=text("'[]'"))
     # [{"name", "uri"}]
     rights: Mapped[list[dict[str, Any]]] = mapped_column(server_default=text("'[]'"))
     publication_year: Mapped[int | None] = mapped_column(SmallInteger)
     publication_date: Mapped[date | None]
     languages: Mapped[list[str]] = mapped_column(server_default=text("'{}'"))
     formats: Mapped[list[str]] = mapped_column(server_default=text("'{}'"))
-    # Repository code in datasetdb (e.g. ZENODO), and the endpoint it was harvested from
-    repository: Mapped[str]
-    harvest_url: Mapped[str | None]
-    keywords: Mapped[str | None] = mapped_column(Computed("jsonb_array_join(subjects, 'name')", persisted=True))
+    # Repository of the record this dataset was built from. All the repositories it was found in, and the
+    # endpoints it was harvested from, are in `dataset_record`
+    harvested_from: Mapped[str] = mapped_column(ForeignKey("repository.code"))
+    # Names of the subjects, comma separated, the text searched and embedded
+    keywords: Mapped[str | None]
+    # How many of description, subjects, creators and publication date the record fills: of the records
+    # sharing a URL (the same DOI harvested from two repositories), the most complete makes the dataset
+    completeness: Mapped[int] = mapped_column(SmallInteger)
+    # Hash of the creators, subjects and dates of the record, its link rows are rewritten when it changes
+    links_hash: Mapped[str]
     # datasetdb.records row this dataset was built from
     source_record_id: Mapped[str]
     source_updated_at: Mapped[datetime]
@@ -165,24 +141,9 @@ class Dataset(Base):
 
     __table_args__ = (
         Index("dataset_to_embed_idx", "id", postgresql_where=text("embedded_at IS NULL")),
-        # Filters
-        Index("dataset_repository_idx", "repository", info=DEFERRED),
+        # Filters. The repository filter reads `dataset_record`, a dataset can be in several
         Index("dataset_publication_date_idx", "publication_date", info=DEFERRED),
         Index("dataset_doi_idx", "doi", info=DEFERRED),
-        Index(
-            "dataset_subjects_idx",
-            "subjects",
-            postgresql_using="gin",
-            postgresql_ops={"subjects": "jsonb_path_ops"},
-            info=DEFERRED,
-        ),
-        Index(
-            "dataset_creators_idx",
-            "creators",
-            postgresql_using="gin",
-            postgresql_ops={"creators": "jsonb_path_ops"},
-            info=DEFERRED,
-        ),
         # Lexical search, one BM25 index per field
         *(
             Index(
@@ -250,13 +211,149 @@ class DatasetEmbedding(Base):
     )
 
 
-# Subject filter, on an expression the model cannot declare in its own table args
-Index(
-    "dataset_subject_keys_idx",
-    func.subject_keys(Dataset.subjects, type_=ARRAY(Text)),
-    postgresql_using="gin",
-    info=DEFERRED,
-)
+class Repository(Base):
+    """A repository the datasets are harvested from, copied from datasetdb by the transform."""
+
+    __tablename__ = "repository"
+
+    code: Mapped[str] = mapped_column(primary_key=True, comment="datasetdb code, e.g. ZENODO")
+    name: Mapped[str]
+    description: Mapped[str | None]
+    url: Mapped[str | None]
+
+
+class Agent(Base):
+    """A person or organization credited on datasets, one row per ORCID, else ROR, else exact name.
+
+    The same person appears twice when only some of their datasets carry their ORCID. The creator
+    filter searches the names an agent is credited under (`AgentName`), so it finds both.
+    """
+
+    __tablename__ = "agent"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    # First name seen for this identity, a label: the names as written are on the links
+    name: Mapped[str]
+    # DataCite nameType: Personal or Organizational
+    type: Mapped[str | None]
+    orcid: Mapped[str | None] = mapped_column(comment="Bare ORCID, e.g. 0000-0002-1825-0097")
+    ror: Mapped[str | None] = mapped_column(comment="Bare ROR id, e.g. 05gq02987")
+
+    __table_args__ = (
+        # Identity, the transform inserts the agents ON CONFLICT DO NOTHING
+        Index("agent_orcid_idx", "orcid", unique=True),
+        Index("agent_ror_idx", "ror", unique=True, postgresql_where=text("orcid IS NULL")),
+        Index("agent_name_idx", "name", unique=True, postgresql_where=text("orcid IS NULL AND ror IS NULL")),
+    )
+
+
+class AgentName(Base):
+    """A name an agent is credited under on some dataset, where the creator filter searches.
+
+    An agent with an ORCID or a ROR has one row per spelling ("ETH Zurich", "ETH Zürich"): found by any
+    of them, it brings all its datasets.
+    """
+
+    __tablename__ = "agent_name"
+
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agent.id", ondelete="CASCADE"), primary_key=True)
+    name: Mapped[str] = mapped_column(primary_key=True)
+    name_key: Mapped[str | None] = mapped_column(Computed("name_key(name)", persisted=True))
+
+    __table_args__ = (
+        # Fuzzy creator filter: the keys closest to name_key(:name) by trigram distance
+        Index(
+            "agent_name_key_trgm_idx",
+            "name_key",
+            postgresql_using="gist",
+            postgresql_ops={"name_key": "gist_trgm_ops"},
+            info=DEFERRED,
+        ),
+        # Then every agent credited under those keys
+        Index("agent_name_key_idx", "name_key", info=DEFERRED),
+    )
+
+
+class DatasetAgent(Base):
+    """An agent credited on a dataset, in the order of the record, as written there."""
+
+    __tablename__ = "dataset_agent"
+
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("dataset.id", ondelete="CASCADE"), primary_key=True)
+    role: Mapped[str] = mapped_column(primary_key=True, server_default=text("'creator'"))
+    # Some physics datasets credit thousands of authors
+    position: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agent.id"))
+    name: Mapped[str]
+    given_name: Mapped[str | None]
+    family_name: Mapped[str | None]
+    # [{"scheme", "value"}], every scheme (ISNI, Scopus...), ORCID and ROR as bare ids
+    identifiers: Mapped[list[dict[str, Any]] | None]
+
+    # Datasets of an agent, read from the index only
+    __table_args__ = (Index("dataset_agent_agent_idx", "agent_id", "dataset_id"),)
+
+
+class Subject(Base):
+    """A subject of datasets, one row per key: "Ecology" and "ecology" are the same subject."""
+
+    __tablename__ = "subject"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    # First name seen for this key, a label: the names as written are on the links
+    name: Mapped[str]
+    key: Mapped[str] = mapped_column(Computed("subject_key(name)", persisted=True), unique=True)
+
+
+class DatasetSubject(Base):
+    """A subject of a dataset, with the name, scheme and URI its record gives it."""
+
+    __tablename__ = "dataset_subject"
+
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("dataset.id", ondelete="CASCADE"), primary_key=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id"), primary_key=True)
+    name: Mapped[str]
+    scheme: Mapped[str | None]
+    uri: Mapped[str | None]
+
+    # Datasets of a subject, read from the index only
+    __table_args__ = (Index("dataset_subject_subject_idx", "subject_id", "dataset_id"),)
+
+
+class DatasetRecord(Base):
+    """A datasetdb record of a dataset, which tells the repositories the dataset was found in.
+
+    The same DOI harvested from two repositories makes one dataset with two records. Its content
+    comes from one of them, `dataset.source_record_id`.
+    """
+
+    __tablename__ = "dataset_record"
+
+    record_id: Mapped[str] = mapped_column(primary_key=True, comment="datasetdb records.id")
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("dataset.id", ondelete="CASCADE"))
+    repository: Mapped[str] = mapped_column(ForeignKey("repository.code"))
+    # The endpoint of the repository the record was harvested from, identifiers are unique within it
+    harvest_url: Mapped[str | None]
+    record_identifier: Mapped[str] = mapped_column(
+        comment="Identifier of the record in its repository: OAI-PMH identifier or unique record ID"
+    )
+
+    # Repository filter, both read from the index only: the repositories of a dataset, the datasets of
+    # a repository
+    __table_args__ = (
+        Index("dataset_record_dataset_idx", "dataset_id", "repository"),
+        Index("dataset_record_repository_idx", "repository", "dataset_id"),
+    )
+
+
+class DatasetDate(Base):
+    """A date of a dataset, typed as in DataCite: Issued, Collected, Coverage..."""
+
+    __tablename__ = "dataset_date"
+
+    dataset_id: Mapped[int] = mapped_column(ForeignKey("dataset.id", ondelete="CASCADE"), primary_key=True)
+    type: Mapped[str] = mapped_column(primary_key=True)
+    date: Mapped[dt.date] = mapped_column(primary_key=True)
 
 
 def search_indexes() -> list[Index]:

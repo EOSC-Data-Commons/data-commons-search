@@ -7,7 +7,7 @@ from collections import Counter
 from sqlalchemy import text
 from sqlalchemy.schema import CreateIndex
 
-from data_commons_search.dataset_models import search_indexes
+from data_commons_search.dataset_models import Base, search_indexes
 from search_pipeline.config import PipelineSettings
 from search_pipeline.db import appdb_engine
 
@@ -47,7 +47,8 @@ def build_indexes(
                 action = "exists"
             counts[action] += 1
             logger.info(f"Index {index.name} {action} in {time.monotonic() - started:.0f}s")
-        # Refresh the planner statistics after the bulk changes of the previous DAGs
-        conn.execute(text("ANALYZE dataset"))
-        conn.execute(text("ANALYZE dataset_embedding"))
+        # Refresh the planner statistics after the bulk changes of the previous DAGs. The filters rely on
+        # them: the most common agents and subjects of the link tables give the size of their datasets
+        for table in Base.metadata.sorted_tables:
+            conn.execute(text(f"ANALYZE {table.name}"))
     return dict(counts)

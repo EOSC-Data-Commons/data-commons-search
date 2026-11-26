@@ -17,14 +17,15 @@ from typing import Any
 
 from sqlalchemy import (
     CTE,
+    JSON,
     ColumnElement,
     Connection,
     Date,
     Float,
     Integer,
+    Label,
     Select,
     String,
-    Subquery,
     Text,
     and_,
     any_,
@@ -38,16 +39,23 @@ from sqlalchemy import (
     true,
     union_all,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB, JSONPATH
+from sqlalchemy.dialects.postgresql import ARRAY, aggregate_order_by
 from sqlalchemy.orm import Session, aliased
 
 from data_commons_search.config import settings
 from data_commons_search.dataset_models import (
     SEARCH_FIELDS,
+    Agent,
+    AgentName,
     Dataset,
+    DatasetAgent,
+    DatasetDate,
     DatasetEmbedding,
+    DatasetRecord,
+    DatasetSubject,
+    Repository,
+    Subject,
     bm25_index_name,
-    creator_name_view,
 )
 from data_commons_search.db import SessionLocal
 from data_commons_search.models import SearchFilters, SearchHit, SearchResults
@@ -60,10 +68,6 @@ from data_commons_search.models import SearchFilters, SearchHit, SearchResults
 # datasets on a common term
 SEMANTIC_EXACT_MAX_DATASETS = 10_000
 LEXICAL_EXACT_MAX_DATASETS = 200_000
-# Creator with other hard filters: up to this many datasets of the creator, the filtered set is looked up
-# from the creator's ids. Above, it is read from the indexes of the other filters, each row checked against
-# the creator's ids (468 ms vs 14 ms for a 120k creator and a 4k subject)
-CREATOR_LOOKUP_MAX_DATASETS = 10_000
 # Creator filter: the names closest to the requested one (typos, accents, word order), kept above a
 # trigram similarity. A typo-ed full name scored 0.50 on its person, 0.39 on the next one
 CREATOR_CANDIDATES = 20
@@ -71,14 +75,13 @@ CREATOR_MIN_SIMILARITY = 0.45
 # DataCite date types describing the period the data covers, used for the soft date boost.
 # Publication dates are not: a 1960-2020 series published in 2023 matches a 1960-2020 question
 COVERAGE_DATE_TYPES = ("Collected", "Coverage", "Valid")
-COVERAGE_IN_RANGE = "$[*] ? (@.type == $types[*]) ? (@.date >= $start && @.date <= $end)"
 
 # Bound once per statement, the values are given at execution
 QUERY = bindparam("query", type_=String)
 VECTOR = bindparam("vector", type_=DatasetEmbedding.embedding.type)
 POOL = bindparam("pool", type_=Integer)
 CREATOR = bindparam("creator", type_=String)
-SUBJECTS = bindparam("subjects", type_=JSONB)
+SUBJECTS = bindparam("subjects", type_=ARRAY(Text))
 REPOSITORIES = bindparam("repositories", type_=ARRAY(String))
 PUBLISHED_AFTER = bindparam("published_after", type_=Date)
 PUBLISHED_BEFORE = bindparam("published_before", type_=Date)
@@ -155,28 +158,71 @@ def _weights() -> dict[str, float]:
     return weights
 
 
-def _creator_names() -> Subquery:
-    """The creator names closest to the requested one, with their datasets."""
-    query_key = func.creator_key(CREATOR)
-    # KNN on the trigram index first, the similarity cut after: a cut inside the index scan would
-    # read the whole index when no name is close enough
-    nearest = (
-        select(creator_name_view.c.dataset_ids, func.similarity(creator_name_view.c.key, query_key).label("similarity"))
-        .order_by(creator_name_view.c.key.op("<->")(query_key))
-        .limit(CREATOR_CANDIDATES)
-        .subquery()
+def _match_ids(filters: SearchFilters) -> Select[Any]:
+    """One row with the ids of the agents credited under the names closest to the creator filter
+    (`agent_ids`, typos, accents and word order tolerated), of the subjects of the subject filter
+    (`subject_ids`, case and accents ignored) and the codes of the repository filter that exist
+    (`repository_codes`), NULL when none matches."""
+    columns = []
+    if filters.creator_name:
+        query_key = func.name_key(CREATOR)
+        candidate = aliased(AgentName)
+        # KNN on the trigram index first, the similarity cut after: a cut inside the index scan would
+        # read the whole index when no name is close enough
+        nearest = (
+            select(candidate.name_key, func.similarity(candidate.name_key, query_key).label("similarity"))
+            .order_by(candidate.name_key.op("<->")(query_key))
+            .limit(CREATOR_CANDIDATES)
+            .subquery()
+        )
+        # Then every agent credited under the close keys. Many agents share a key (a common name has one
+        # per ORCID, plus one per spelling without identifier): the nearest rows alone would cut some
+        close_keys = select(nearest.c.name_key).where(nearest.c.similarity >= CREATOR_MIN_SIMILARITY)
+        close = select(func.array_agg(AgentName.agent_id.distinct())).where(AgentName.name_key.in_(close_keys))
+        columns.append(close.scalar_subquery().label("agent_ids"))
+    if filters.subjects:
+        keys = select(func.subject_key(func.unnest(SUBJECTS)))
+        columns.append(
+            select(func.array_agg(Subject.id)).where(Subject.key.in_(keys)).scalar_subquery().label("subject_ids")
+        )
+    if filters.repositories:
+        known = select(func.array_agg(Repository.code)).where(Repository.code == any_(REPOSITORIES))
+        columns.append(known.scalar_subquery().label("repository_codes"))
+    return select(*columns)
+
+
+def _linked_ids(dataset_id: Any, linked_id: Any, ids: list[Any]) -> Select[Any]:
+    """Datasets linked to these agents, subjects or repositories. The ids are inline, not bound: the
+    planner reads how many datasets they have from the statistics of the link table (a generic plan
+    would guess). They are read from the database by `_match_ids`, never the values of the request."""
+    return select(dataset_id.label("id")).where(
+        linked_id.in_(bindparam(linked_id.key, ids, expanding=True, literal_execute=True))
     )
-    return select(nearest.c.dataset_ids).where(nearest.c.similarity >= CREATOR_MIN_SIMILARITY).subquery("names")
+
+
+# Link table columns of each column of `_match_ids`, most selective first. A dataset passes the repository
+# filter when any of its records comes from one of the repositories, not only the record that made it
+LINKS = {
+    "agent_ids": (DatasetAgent.dataset_id, DatasetAgent.agent_id),
+    "subject_ids": (DatasetSubject.dataset_id, DatasetSubject.subject_id),
+    "repository_codes": (DatasetRecord.dataset_id, DatasetRecord.repository),
+}
+
+
+def _match_links(db: Session | Connection, filters: SearchFilters, params: dict[str, Any]) -> list[Select[Any]] | None:
+    """The datasets of the agents, subjects and repositories the filters match, one select per filter.
+    None when one of them matches nothing: no dataset passes."""
+    if not (filters.creator_name or filters.subjects or filters.repositories):
+        return []
+    matched = db.execute(_match_ids(filters), params).mappings().one()
+    if not all(matched.values()):
+        return None
+    return [_linked_ids(*LINKS[name], matched[name]) for name in LINKS if name in matched]
 
 
 def _row_conditions(dataset: Any, filters: SearchFilters) -> list[ColumnElement[bool]]:
-    """Hard filters on the columns of a dataset row (`Dataset` or an alias of it), all but the creator."""
+    """Hard filters on the columns of a dataset row (`Dataset` or an alias of it)."""
     conditions = []
-    if filters.subjects:
-        keys = func.subject_keys(dataset.subjects, type_=ARRAY(Text))
-        conditions.append(keys.op("&&")(func.subject_keys(SUBJECTS, type_=ARRAY(Text))))
-    if filters.repositories:
-        conditions.append(dataset.repository == any_(REPOSITORIES))
     if filters.published_after:
         conditions.append(dataset.publication_date >= PUBLISHED_AFTER)
     if filters.published_before:
@@ -184,30 +230,24 @@ def _row_conditions(dataset: Any, filters: SearchFilters) -> list[ColumnElement[
     return conditions
 
 
-def _creator_ids() -> Select[Any]:
-    """Datasets of the creator names closest to the requested one."""
-    return select(func.unnest(_creator_names().c.dataset_ids).label("id"))
-
-
-def _filtered_ids(filters: SearchFilters, creator_lookup: bool) -> Select[Any]:
-    """Ids of the datasets passing all the hard filters. `creator_lookup`: see CREATOR_LOOKUP_MAX_DATASETS."""
+def _filtered_ids(filters: SearchFilters, linked: list[Select[Any]]) -> Select[Any]:
+    """Ids of the datasets passing all the hard filters, `linked` the datasets of the matched agents,
+    subjects and repositories."""
     conditions = _row_conditions(Dataset, filters)
     if not conditions:
-        # Creator only, its ids as they are, no lookup in the dataset table
-        return _creator_ids().distinct()
-    if filters.creator_name:
-        in_creator = Dataset.id.in_(_creator_ids())
-        # IS TRUE stops the planner turning the IN into a join driven from the creator's ids
-        conditions.append(in_creator if creator_lookup else in_creator.is_(true()))
-    return select(Dataset.id).where(*conditions)
+        # Agents, subjects or repositories only, read from the link tables, no lookup in the dataset table
+        first, *rest = linked
+        first_id = first.selected_columns[0]
+        return first.where(*(first_id.in_(other) for other in rest)).distinct()
+    return select(Dataset.id).where(*conditions, *(Dataset.id.in_(ids) for ids in linked))
 
 
-def _post_filter(filters: SearchFilters, on_embedding: bool) -> ColumnElement[bool]:
+def _post_filter(filters: SearchFilters, linked: list[Select[Any]], on_embedding: bool) -> ColumnElement[bool]:
     """Hard filters checked on each row of an index scan, of `dataset_embedding` or of `dataset`.
 
-    `IS TRUE` keeps them out of the plan: the planner would otherwise turn the creator IN into a join
-    driven from the creator's ids, or use the filter indexes, and then score all the filtered datasets
-    exactly instead of using the search index.
+    `IS TRUE` keeps them out of the plan: the planner would otherwise turn them into joins driven from
+    the linked ids or the filter indexes, and then score all the filtered datasets exactly instead of
+    using the search index.
     """
     dataset = aliased(Dataset) if on_embedding else Dataset
     dataset_id = DatasetEmbedding.dataset_id if on_embedding else Dataset.id
@@ -215,22 +255,25 @@ def _post_filter(filters: SearchFilters, on_embedding: bool) -> ColumnElement[bo
     if on_embedding and conditions:
         # The columns of an embedding row are on its dataset
         conditions = [exists().where(dataset.id == dataset_id, *conditions)]
-    if filters.creator_name:
-        conditions.insert(0, dataset_id.in_(_creator_ids()))
-    return and_(*conditions).is_(true())
+    # A lookup of the row's dataset in the link table, not `IN (linked ids)`: too large to hash in
+    # work_mem (300k ids of a broad subject), the ids are scanned again for each row
+    on_links = [exists(ids.where(ids.selected_columns[0] == dataset_id)) for ids in linked]
+    return and_(*on_links, *conditions).is_(true())
 
 
 def _build_query(
     with_vector: bool,
     filters: SearchFilters,
-    date_range: dict[str, Any] | None = None,
+    linked: list[Select[Any]],
+    date_range: tuple[str, str] | None = None,
     filtered: CTE | None = None,
     count: int = 0,
 ) -> Select[Any]:
     """Hybrid query, returning the best datasets with their fused score and the candidates count.
 
-    `filtered`: the datasets passing the hard filters, `count` of them. The count picks for each kind of
-    list between scoring them exactly (few datasets) and filtering the index scans on each row (many).
+    `filtered`: the datasets passing the hard filters, `count` of them, `linked` the datasets of the
+    agents, subjects and repositories they matched. The count picks for each kind of list between scoring them exactly
+    (few datasets) and filtering the index scans on each row (many).
 
     Typical SQL generated, condensed (aliases shortened, only the title lists shown: the keywords and
     description lists are the same with their field). Bind parameters are written `:name`.
@@ -264,31 +307,44 @@ def _build_query(
             SELECT dataset_id, sum(score * CASE list WHEN 'semantic_title' THEN 0.24 ... ELSE 0 END) AS score
             FROM normalized GROUP BY dataset_id
         )
-        SELECT dataset.*, fused.score AS score, count(*) OVER () AS total
-        FROM dataset JOIN fused ON fused.dataset_id = dataset.id
-        ORDER BY score DESC LIMIT :limit
+        top AS (
+            SELECT dataset_id, score, count(*) OVER () AS total FROM fused ORDER BY score DESC LIMIT :limit
+        )
+        SELECT dataset.*, top.score, top.total,
+            (SELECT json_strip_nulls(json_agg(json_build_object('name', dataset_agent.name, 'type', agent.type, ...)
+                ORDER BY position))
+             FROM dataset_agent JOIN agent ON agent.id = agent_id WHERE dataset_id = dataset.id) AS creators,
+            ...  -- subjects, dates
+        FROM dataset JOIN top ON top.dataset_id = dataset.id
+        ORDER BY top.score DESC
 
-    With hard filters, the datasets passing them are counted first, in a query of their own
-    (search_rows), the creator from the closest creator names:
+    With hard filters, search_rows first matches the creator, the subjects and the repositories (_match_ids):
+
+        SELECT
+            (SELECT array_agg(DISTINCT agent_id) FROM agent_name WHERE name_key IN (
+                SELECT name_key FROM (
+                    SELECT name_key, similarity(name_key, name_key(:creator)) AS similarity
+                    FROM agent_name ORDER BY name_key <-> name_key(:creator) LIMIT 20  -- trigram index
+                ) WHERE similarity >= 0.45
+            )) AS agent_ids,
+            (SELECT array_agg(id) FROM subject
+             WHERE key IN (SELECT subject_key(unnest(:subjects)))) AS subject_ids,
+            (SELECT array_agg(code) FROM repository WHERE code = ANY(:repositories)) AS repository_codes
+
+    then counts the datasets passing all the filters, the matched ids inline. A dataset is in a
+    repository when any of its records is, not only the one that made it:
 
         SELECT count(*) FROM (
             SELECT id FROM dataset
-            WHERE subject_keys(subjects) && subject_keys(:subjects)  -- any of the subjects, GIN index
-              AND repository = ANY(:repositories)
-              AND publication_date >= :published_after AND publication_date <= :published_before
-              AND id IN (
-                  SELECT unnest(dataset_ids) FROM (
-                      SELECT dataset_ids, similarity(key, creator_key(:creator)) AS similarity
-                      FROM creator_name ORDER BY key <-> creator_key(:creator) LIMIT 20
-                  ) WHERE similarity >= 0.45
-              )
+            WHERE publication_date >= :published_after AND publication_date <= :published_before
+              AND id IN (SELECT dataset_id FROM dataset_agent WHERE agent_id IN (17, 42))
+              AND id IN (SELECT dataset_id FROM dataset_subject WHERE subject_id IN (3))
+              AND id IN (SELECT dataset_id FROM dataset_record WHERE repository IN ('ZENODO'))
             LIMIT 200001
         )
 
-    With other filters and a creator of more than CREATOR_LOOKUP_MAX_DATASETS datasets (counted first on
-    the creator names), the creator condition is `(id IN (...)) IS TRUE`: the indexes of the other filters
-    drive the lookup, each row checked against the creator's ids. With the creator only, the ids are
-    read from the creator names, without the dataset table.
+    Without date filters, the ids are read from the link tables, without the dataset table:
+    `SELECT DISTINCT dataset_id FROM dataset_agent WHERE agent_id IN (...) AND dataset_id IN (...)`.
 
     The lists then score them exactly when the count is up to SEMANTIC_EXACT_MAX_DATASETS (semantic)
     or LEXICAL_EXACT_MAX_DATASETS (lexical), from the same query as a CTE:
@@ -313,7 +369,8 @@ def _build_query(
         SELECT dataset_id, 1 - (embedding <=> :vector) AS score
         FROM dataset_embedding
         WHERE field = 'title' AND (
-            dataset_id IN (SELECT unnest(dataset_ids) FROM ...)  -- creator ids, as counted
+            EXISTS (SELECT 1 FROM dataset_agent WHERE agent_id IN (17, 42)
+                    AND dataset_agent.dataset_id = dataset_embedding.dataset_id)
             AND EXISTS (SELECT 1 FROM dataset WHERE dataset.id = dataset_embedding.dataset_id AND ...)
         ) IS TRUE
         ORDER BY embedding <=> :vector LIMIT :pool
@@ -321,14 +378,16 @@ def _build_query(
         -- lexical list
         SELECT id AS dataset_id, -(title <@> to_bm25query(:query, 'dataset_title_bm25_idx')) AS score
         FROM dataset
-        WHERE (id IN (SELECT unnest(dataset_ids) FROM ...) AND repository = ANY(:repositories) ...) IS TRUE
+        WHERE (EXISTS (SELECT 1 FROM dataset_agent WHERE ... AND dataset_agent.dataset_id = dataset.id)
+               AND publication_date >= :published_after ...) IS TRUE
         ORDER BY title <@> to_bm25query(:query, 'dataset_title_bm25_idx') LIMIT :pool
 
-    With a date range, the final score is boosted for the datasets covering it:
+    With a date range, the fused score is boosted for the datasets covering it:
 
-        SELECT dataset.*, fused.score * CASE WHEN jsonb_path_exists(dataset.dates, :COVERAGE_IN_RANGE,
-            '{"start": "2000-01-01", "end": "9999-12-31", "types": ["Collected", "Coverage", "Valid"]}')
-            THEN :date_boost ELSE 1.0 END AS score, ...
+        SELECT dataset_id, score * CASE WHEN EXISTS (
+            SELECT 1 FROM dataset_date WHERE dataset_date.dataset_id = fused.dataset_id
+            AND type IN ('Collected', 'Coverage', 'Valid') AND CAST(date AS text) BETWEEN :start AND :end
+        ) THEN :date_boost ELSE 1.0 END AS score, ...
     """
     # Each kind of list scores the filtered datasets exactly up to its threshold, above its index scan
     # is filtered on each row
@@ -337,11 +396,11 @@ def _build_query(
         if count <= SEMANTIC_EXACT_MAX_DATASETS:
             semantic_filtered = filtered
         else:
-            semantic_post = _post_filter(filters, on_embedding=True)
+            semantic_post = _post_filter(filters, linked, on_embedding=True)
         if count <= LEXICAL_EXACT_MAX_DATASETS:
             lexical_filtered = filtered
         else:
-            lexical_post = _post_filter(filters, on_embedding=False)
+            lexical_post = _post_filter(filters, linked, on_embedding=False)
     lists: list[tuple[str, Select[Any]]] = []
     for field in SEARCH_FIELDS:
         if with_vector:
@@ -369,48 +428,94 @@ def _build_query(
 
     score: ColumnElement[Any] = fused.c.score
     if date_range:
-        in_range = func.jsonb_path_exists(
-            Dataset.dates, cast(literal(COVERAGE_IN_RANGE), JSONPATH), cast(literal(date_range, JSONB), JSONB)
+        # Compared as yyyy-mm-dd strings, the dates of the filter may be partial (a year)
+        in_range = exists().where(
+            DatasetDate.dataset_id == fused.c.dataset_id,
+            DatasetDate.type.in_(COVERAGE_DATE_TYPES),
+            cast(DatasetDate.date, String).between(*date_range),
         )
         score = score * case((in_range, settings.date_boost), else_=1.0)
     score = score.label("score")
-    return (
-        select(Dataset, score, func.count().over().label("total"))
-        .join(fused, fused.c.dataset_id == Dataset.id)
+    top = (
+        select(fused.c.dataset_id, score, func.count().over().label("total"))
         .order_by(score.desc())
         .limit(bindparam("limit"))
+        .cte("top")
+    )
+    # The lists of the returned datasets only, read from their link tables
+    return (
+        select(Dataset, top.c.score, top.c.total, *_dataset_lists())
+        .join(top, top.c.dataset_id == Dataset.id)
+        .order_by(top.c.score.desc())
     )
 
 
-def _date_range(start_date: str | None, end_date: str | None) -> dict[str, Any] | None:
-    """jsonpath variables of the date boost, dates compare as yyyy-mm-dd strings."""
+def _json_list(name: str, fields: dict[str, Any], order_by: Any, link: Any, *joins: tuple[Any, Any]) -> Label[Any]:
+    """JSON array of the rows linked to the outer dataset, one object of `fields` per row, nulls omitted."""
+    item = func.json_build_object(*(arg for key, column in fields.items() for arg in (key, column)))
+    query = select(func.json_strip_nulls(func.json_agg(aggregate_order_by(item, order_by)), type_=JSON))
+    query = query.select_from(link.__table__)
+    for target, on in joins:
+        query = query.join(target, on)
+    return query.where(link.dataset_id == Dataset.id).scalar_subquery().label(name)
+
+
+def _dataset_lists() -> list[Label[Any]]:
+    """Creators, subjects, dates and harvest endpoint of the outer dataset, as `_to_hit` reads them."""
+    # Endpoint of the record the dataset was built from
+    harvest_url = select(DatasetRecord.harvest_url).where(DatasetRecord.record_id == Dataset.source_record_id)
+    return [
+        harvest_url.scalar_subquery().label("harvest_url"),
+        _json_list(
+            "creators",
+            {
+                "name": DatasetAgent.name,
+                "given_name": DatasetAgent.given_name,
+                "family_name": DatasetAgent.family_name,
+                "type": Agent.type,
+                "identifiers": DatasetAgent.identifiers,
+            },
+            DatasetAgent.position,
+            DatasetAgent,
+            (Agent, Agent.id == DatasetAgent.agent_id),
+        ),
+        _json_list(
+            "subjects",
+            {"subject": DatasetSubject.name, "subjectScheme": DatasetSubject.scheme, "valueUri": DatasetSubject.uri},
+            DatasetSubject.name,
+            DatasetSubject,
+        ),
+        _json_list("dates", {"date": DatasetDate.date, "dateType": DatasetDate.type}, DatasetDate.date, DatasetDate),
+    ]
+
+
+def _date_range(start_date: str | None, end_date: str | None) -> tuple[str, str] | None:
+    """Bounds of the date boost, dates compare as yyyy-mm-dd strings."""
     if not start_date and not end_date:
         return None
-    return {"start": start_date or "0000-01-01", "end": end_date or "9999-12-31", "types": list(COVERAGE_DATE_TYPES)}
+    return start_date or "0000-01-01", end_date or "9999-12-31"
 
 
-def _to_hit(dataset: Dataset, score: float) -> SearchHit:
-    """Map a dataset onto the `SearchHit` shape the agent and the frontend already use."""
-    dates = [{"date": d["date"], "dateType": d["type"]} for d in dataset.dates]
+def _to_hit(row: Any) -> SearchHit:
+    """Map a result row onto the `SearchHit` shape the agent and the frontend already use."""
+    dataset: Dataset = row.Dataset
+    dates = row.dates or []
     # SearchHit reads the publication date from the Issued date, which the transform may have derived
     if dataset.publication_date and not any(d["dateType"] == "Issued" for d in dates):
         dates.append({"date": dataset.publication_date.isoformat(), "dateType": "Issued"})
     return SearchHit.model_validate(
         {
             "_id": dataset.url,
-            "_score": score,
+            "_score": row.score,
             "_source": {
                 "url": dataset.url,
                 "doi": dataset.doi,
-                "_repo": dataset.repository,
-                "_harvest_url": dataset.harvest_url,
+                "_repo": dataset.harvested_from,
+                "_harvest_url": row.harvest_url,
                 "titles": [{"title": dataset.title}],
                 "descriptions": [{"description": dataset.description}] if dataset.description else [],
-                "subjects": [
-                    {"subject": s["name"], "subjectScheme": s.get("scheme"), "valueUri": s.get("uri")}
-                    for s in dataset.subjects
-                ],
-                "creators": [{"creatorName": c["name"], **c} for c in dataset.creators],
+                "subjects": row.subjects or [],
+                "creators": [{"creatorName": c["name"], **c} for c in row.creators or []],
                 "dates": dates,
                 "publicationYear": str(dataset.publication_year) if dataset.publication_year else None,
             },
@@ -424,7 +529,7 @@ def _filter_params(filters: SearchFilters) -> dict[str, Any]:
     if filters.creator_name:
         params["creator"] = filters.creator_name
     if filters.subjects:
-        params["subjects"] = [{"name": subject} for subject in filters.subjects]
+        params["subjects"] = [" ".join(subject.split()) for subject in filters.subjects]
     if filters.repositories:
         params["repositories"] = [code.strip().upper() for code in filters.repositories]
     if filters.published_after:
@@ -441,16 +546,12 @@ def search_rows(
     params = {**params, **_filter_params(filters)}
     date_range = _date_range(filters.start_date, filters.end_date)
     if not filters.has_hard_filter:
-        return list(db.execute(_build_query(with_vector, filters, date_range), params))
+        return list(db.execute(_build_query(with_vector, filters, [], date_range), params))
 
-    # Creator with other filters, its datasets counted on the matching names (an upper bound, a dataset of
-    # several names counts once per name) pick how the filtered set is looked up
-    creator_lookup = True
-    if filters.creator_name and _row_conditions(Dataset, filters):
-        names = _creator_names()
-        creator_count = db.execute(select(func.sum(func.cardinality(names.c.dataset_ids))), params).scalar()
-        creator_lookup = (creator_count or 0) <= CREATOR_LOOKUP_MAX_DATASETS
-    ids = _filtered_ids(filters, creator_lookup)
+    linked = _match_links(db, filters, params)
+    if linked is None:
+        return []
+    ids = _filtered_ids(filters, linked)
     # Counted up to the largest threshold, a broad filter (e.g. a big repository) is not counted in full
     capped = ids.limit(LEXICAL_EXACT_MAX_DATASETS + 1).subquery()
     count = db.execute(select(func.count()).select_from(capped), params).scalar() or 0
@@ -459,7 +560,7 @@ def search_rows(
     # LIMIT the exact count drops no row, it gives the planner the size of the set: guessed, it hash
     # joins it to a sequential scan of the dataset table instead of looking up the filtered rows
     filtered = ids.limit(literal(count, literal_execute=True)).cte("filtered").prefix_with("MATERIALIZED")
-    return list(db.execute(_build_query(with_vector, filters, date_range, filtered, count), params))
+    return list(db.execute(_build_query(with_vector, filters, linked, date_range, filtered, count), params))
 
 
 def _run_query(with_vector: bool, filters: SearchFilters, params: dict[str, Any]) -> list[Any]:
@@ -482,4 +583,4 @@ async def search_datasets(
     if vector is not None:
         params["vector"] = vector
     rows = await asyncio.to_thread(_run_query, vector is not None, filters or SearchFilters(), params)
-    return SearchResults(total_found=rows[0].total if rows else 0, hits=[_to_hit(r.Dataset, r.score) for r in rows])
+    return SearchResults(total_found=rows[0].total if rows else 0, hits=[_to_hit(r) for r in rows])

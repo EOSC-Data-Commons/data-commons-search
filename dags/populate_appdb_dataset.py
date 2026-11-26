@@ -20,6 +20,7 @@ from search_pipeline.assets import DATASET_TABLE
 from search_pipeline.config import get_settings
 from search_pipeline.db import appdb_engine
 from search_pipeline.embeddings import queued_count
+from search_pipeline.indexes import build_indexes
 from search_pipeline.transform import has_datasets, populate_appdb_dataset
 
 # Records committed in datasetdb after the previous run started can carry an older updated_at
@@ -79,17 +80,15 @@ def populate_appdb_dataset_dag() -> None:
     def create_appdb_tables() -> None:
         """Create the missing appdb tables from the SQLAlchemy models, as the ingest role which then owns them.
 
-        The deferred search indexes are left to rebuild_indexes. Roles and extensions: scripts/init_roles.sql
+        The deferred search indexes are left to rebuild_indexes. Roles and extensions: scripts/init_roles.sql.
+        Only creates: no migration, after a change of the models appdb is reset with scripts/reset_db.sh
         """
         with appdb_engine(get_settings()).begin() as conn:
-            # Functions used by the generated columns and the view
-            conn.execute(text(dataset_models.JSONB_ARRAY_JOIN_DDL))
-            conn.execute(text(dataset_models.CREATOR_KEY_DDL))
-            conn.execute(text(dataset_models.SUBJECT_KEYS_DDL))
+            # Functions used by the generated columns, before the tables
+            for statement in dataset_models.FUNCTIONS_DDL:
+                conn.execute(text(statement))
             db_models.Base.metadata.create_all(conn)
             dataset_models.Base.metadata.create_all(conn)
-            for ddl in dataset_models.CREATOR_NAME_DDL:
-                conn.execute(text(ddl))
 
     @task(outlets=[DATASET_TABLE])
     def transform() -> dict[str, Any]:
@@ -104,8 +103,11 @@ def populate_appdb_dataset_dag() -> None:
         # Only a complete read moves the watermarks, of the repositories it covered. A failed run raised above
         if not params["limit"] and stats.read_started:
             save_watermarks(watermarks | dict.fromkeys(stats.repositories, stats.read_started))
-        # A skipped task emits no asset event, so the next DAGs do not run
+        # A skipped task emits no asset event, so the next DAGs do not run. rebuild_indexes is the last of
+        # them: changes with nothing to embed (creators, subjects) get their indexes and statistics here
         if not queued_count(settings):
+            if stats.inserted or stats.updated or stats.deleted:
+                build_indexes(settings)
             raise AirflowSkipException(f"No dataset to embed: {stats.as_dict()}")
         context["outlet_events"][DATASET_TABLE].extra = stats.as_dict()
         return stats.as_dict()

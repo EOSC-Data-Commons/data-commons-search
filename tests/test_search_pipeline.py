@@ -5,13 +5,14 @@ from datetime import date, datetime, timezone
 import pytest
 
 from search_pipeline.embeddings import RecordEmbeddings, split_text
-from search_pipeline.transform import SkipRecordError, build_dataset, normalize_doi
+from search_pipeline.transform import SkipRecordError, build_dataset, clean_identifier, normalize_doi
 
 
 def record(**overrides: object) -> dict:
     """A datasetdb record as returned by SELECT_RECORDS_SQL."""
     base = {
         "id": "endpoint::r1",
+        "record_identifier": "oai:example.org:r1",
         "url": "https://example.org/r1",
         "title": "Record title",
         "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -37,10 +38,10 @@ def test_normalize_doi(value: str | None, expected: str | None) -> None:
 
 
 def test_doi_makes_the_url() -> None:
-    row = build_dataset(record(datacite={"titles": [{"title": "Record title"}], "doi": "10.5281/ZENODO.1"}))
+    row = build_dataset(record(datacite={"titles": [{"title": "Record title"}], "doi": "10.5281/ZENODO.1"})).dataset
     assert (row.url, row.doi) == ("https://doi.org/10.5281/zenodo.1", "10.5281/zenodo.1")
     # A doi.org URL given as the record URL counts as the DOI
-    assert build_dataset(record(url="https://doi.org/10.1234/ABC")).doi == "10.1234/abc"
+    assert build_dataset(record(url="https://doi.org/10.1234/ABC")).dataset.doi == "10.1234/abc"
 
 
 def test_skipped_records() -> None:
@@ -53,7 +54,7 @@ def test_skipped_records() -> None:
 
 
 def test_fields_are_cleaned_up() -> None:
-    row = build_dataset(
+    built = build_dataset(
         record(
             datacite={
                 "titles": [
@@ -76,6 +77,13 @@ def test_fields_are_cleaned_up() -> None:
                         ],
                     },
                     {"givenName": "No name"},
+                    {
+                        "creatorName": "University of Example",
+                        "nameType": "Organizational",
+                        "nameIdentifiers": [
+                            {"nameIdentifier": "https://ror.org/05GQ02987", "nameIdentifierScheme": "ROR"}
+                        ],
+                    },
                 ],
                 "dates": [{"date": "2020-05-01", "dateType": "Available"}, {"date": "2020", "dateType": "Issued"}],
                 "publicationYear": "2020",
@@ -83,6 +91,8 @@ def test_fields_are_cleaned_up() -> None:
             }
         )
     )
+    row = built.dataset
+    assert (row.source_record_id, built.record_identifier) == ("endpoint::r1", "oai:example.org:r1")
     assert row.title == "English title"
     assert row.description == "Abstract."
     assert row.descriptions == [
@@ -90,27 +100,98 @@ def test_fields_are_cleaned_up() -> None:
         {"text": "Samenvatting.", "type": "Abstract", "lang": "nl"},
         {"text": "Abstract.", "type": "Abstract", "lang": "en"},
     ]
-    assert row.subjects == [{"name": "Ecology", "scheme": "FOS"}]
-    assert row.creators == [{"name": "Doe, Jane", "identifiers": [{"scheme": "ORCID", "value": "0000-0002-1825-0097"}]}]
+    assert built.subjects == [{"name": "Ecology", "scheme": "FOS"}]
+    assert row.keywords == "Ecology"
+    assert built.creators == [
+        {"name": "Doe, Jane", "identifiers": [{"scheme": "ORCID", "value": "0000-0002-1825-0097"}]},
+        {
+            "name": "University of Example",
+            "type": "Organizational",
+            "identifiers": [{"scheme": "ROR", "value": "05gq02987"}],
+        },
+    ]
     # The invalid "2020" date is dropped, Available is the best date left
-    assert row.dates == [{"date": "2020-05-01", "type": "Available"}]
+    assert built.dates == [{"date": "2020-05-01", "type": "Available"}]
     assert (row.publication_year, row.publication_date) == (2020, date(2020, 5, 1))
     assert row.languages == ["en", "nl"]
     assert row.formats == ["text/csv"]
 
 
+@pytest.mark.parametrize(
+    ("identifier", "scheme", "expected"),
+    [
+        ("https://orcid.org/0000-0002-1825-0097", None, {"scheme": "ORCID", "value": "0000-0002-1825-0097"}),
+        # Lowercase checksum and missing hyphens are the same ORCID
+        ("0000-0002-1694-233x", "ORCID", {"scheme": "ORCID", "value": "0000-0002-1694-233X"}),
+        ("0000000218250097", "orcid", {"scheme": "ORCID", "value": "0000-0002-1825-0097"}),
+        ("https://ror.org/05GQ02987", None, {"scheme": "ROR", "value": "05gq02987"}),
+        # Not an identity: a placeholder, an ISNI or a GRID id under the ORCID or ROR scheme
+        ("N/A", "ORCID", None),
+        ("0000000121839049", "ROR", None),
+        ("grid.5333.6", "ROR", None),
+        # Other schemes are kept as written
+        ("0000 0001 2183 9049", "ISNI", {"scheme": "ISNI", "value": "0000 0001 2183 9049"}),
+    ],
+)
+def test_clean_identifier(identifier: str, scheme: str | None, expected: dict | None) -> None:
+    assert clean_identifier({"nameIdentifier": identifier, "nameIdentifierScheme": scheme}) == expected
+
+
+def test_names_too_long_for_one_creator_or_subject_are_dropped() -> None:
+    long_name = "word " * 200
+    built = build_dataset(
+        record(
+            datacite={
+                "titles": [{"title": "T"}],
+                "subjects": [{"subject": long_name}, {"subject": "Ecology"}],
+                "creators": [{"creatorName": long_name}, {"creatorName": "Doe, Jane"}],
+            }
+        )
+    )
+    assert [s["name"] for s in built.subjects] == ["Ecology"]
+    assert [c["name"] for c in built.creators] == ["Doe, Jane"]
+    assert built.dataset.keywords == "Ecology"
+
+
+def test_completeness_and_links_hash() -> None:
+    def build(**datacite: object) -> object:
+        return build_dataset(record(datacite={"titles": [{"title": "T"}], **datacite})).dataset
+
+    bare = build()
+    with_creator = build(creators=[{"creatorName": "Doe, Jane"}])
+    assert (bare.completeness, with_creator.completeness) == (0, 1)
+    full = build(
+        creators=[{"creatorName": "Doe, Jane"}],
+        subjects=[{"subject": "Ecology"}],
+        descriptions=[{"description": "An abstract.", "descriptionType": "Abstract"}],
+        publicationYear="2020",
+    )
+    assert full.completeness == 4
+    # The hash follows what is written to the link tables: creators, their identifiers, subjects, dates
+    assert bare.links_hash != with_creator.links_hash
+    assert with_creator.links_hash == build(creators=[{"creatorName": "Doe,  Jane"}]).links_hash
+    with_orcid = build(
+        creators=[
+            {"creatorName": "Doe, Jane", "nameIdentifiers": [{"nameIdentifier": "orcid.org/0000-0002-1825-0097"}]}
+        ]
+    )
+    assert with_creator.links_hash != with_orcid.links_hash
+    assert bare.links_hash != build(subjects=[{"subject": "Ecology", "subjectScheme": "FOS"}]).links_hash
+    assert bare.links_hash != build(dates=[{"date": "2020-05-01", "dateType": "Collected"}]).links_hash
+
+
 def test_machine_metadata_descriptions_are_dropped() -> None:
     stac = '{"gsd":0.0008333333333333334,"datetime":"2012-04-15T15:51:40Z","proj:bbox":[33.99958333,12.99958333]}'
-    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": [{"description": stac}]}))
+    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": [{"description": stac}]})).dataset
     assert row.description is None
     prose = "Data collected at 12 stations between 1960 and 2020 (CO2, ppm)."
-    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": [{"description": prose}]}))
+    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": [{"description": prose}]})).dataset
     assert row.description == prose
 
 
 def test_main_description() -> None:
     def build(*descriptions: dict) -> tuple[str | None, list[dict]]:
-        row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": list(descriptions)}))
+        row = build_dataset(record(datacite={"titles": [{"title": "T"}], "descriptions": list(descriptions)})).dataset
         return row.description, row.descriptions
 
     # DANS: HTML removed, date notes dropped, the abstracts of the same language joined
@@ -139,7 +220,7 @@ def test_main_description() -> None:
 
 
 def test_publication_date_falls_back_to_the_year() -> None:
-    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "publicationYear": "1999"}))
+    row = build_dataset(record(datacite={"titles": [{"title": "T"}], "publicationYear": "1999"})).dataset
     assert row.publication_date == date(1999, 1, 1)
 
 
