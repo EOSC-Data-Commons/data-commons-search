@@ -461,11 +461,12 @@ def _json_list(name: str, fields: dict[str, Any], order_by: Any, link: Any, *joi
 
 
 def _dataset_lists() -> list[Label[Any]]:
-    """Creators, subjects, dates and harvest endpoint of the outer dataset, as `_to_hit` reads them."""
-    # Endpoint of the record the dataset was built from
-    harvest_url = select(DatasetRecord.harvest_url).where(DatasetRecord.record_id == Dataset.source_record_id)
+    """Creators, subjects, dates and source record of the outer dataset, as `_to_hit` reads them."""
+    # Endpoint and identifier of the record the dataset was built from, together the key of its files in filedb
+    source_record = DatasetRecord.record_id == Dataset.source_record_id
     return [
-        harvest_url.scalar_subquery().label("harvest_url"),
+        select(DatasetRecord.harvest_url).where(source_record).scalar_subquery().label("harvest_url"),
+        select(DatasetRecord.record_identifier).where(source_record).scalar_subquery().label("record_identifier"),
         _json_list(
             "creators",
             {
@@ -512,6 +513,7 @@ def _to_hit(row: Any) -> SearchHit:
                 "doi": dataset.doi,
                 "_repo": dataset.harvested_from,
                 "_harvest_url": row.harvest_url,
+                "_record_identifier": row.record_identifier,
                 "titles": [{"title": dataset.title}],
                 "descriptions": [{"description": dataset.description}] if dataset.description else [],
                 "subjects": row.subjects or [],
