@@ -10,7 +10,7 @@ A server for the [EOSC Data Commons project](https://eosc.eu/horizon-europe-proj
 
 The HTTP API comprises 2 main endpoints:
 
-- `/mcp`: **MCP server** that searches for relevant data to answer a user question using the EOSC Data Commons OpenSearch service
+- `/mcp`: **MCP server** that searches for relevant data to answer a user question, with a hybrid search (BM25 + vectors) over the EOSC Data Commons datasets in PostgreSQL
   - Uses Streamable HTTP transport
   - Available tools:
     - [x] Search datasets
@@ -30,7 +30,7 @@ The system can be used directly as a MCP server using either STDIO, or Streamabl
 
 > [!WARNING]
 >
-> You will need access to a pre-indexed OpenSearch instance for the MCP server to work.
+> You will need access to a PostgreSQL `appdb` with the `dataset` tables built by the [search pipeline](#-search-pipeline) for the MCP server to work.
 
 Follow the instructions of your client, and use the `/mcp` URL of the public server: https://matchmaker.eosc-data-commons.eu/api/search/mcp
 
@@ -61,7 +61,7 @@ Your VSCode `mcp.json` should look like:
 > Requirements:
 >
 > - [x] [`uv`](https://docs.astral.sh/uv/getting-started/installation/), to easily handle scripts and virtual environments
-> - [x] [docker](https://docs.docker.com/get-started/get-docker/), to deploy the database and OpenSearch service
+> - [x] [docker](https://docs.docker.com/get-started/get-docker/), to deploy the database
 > - [x] API key for a LLM provider: [e-infra CZ](https://chat.ai.e-infra.cz/), [Mistral.ai](https://console.mistral.ai/api-keys), or [OpenRouter](https://openrouter.ai/)
 >
 
@@ -92,14 +92,18 @@ OIDC_CLIENT_SECRET=
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
 POSTGRES_HOST=localhost
-POSTGRES_USER=app
-POSTGRES_PASSWORD=app_password
+# Role of the API: reads all of appdb, writes only the user tables
+POSTGRES_APPDB_SEARCH_USER=app
+POSTGRES_APPDB_SEARCH_PASSWORD=app_password
+# Role of the ingestion (DAGs, scripts): reads all the warehouse databases, creates and writes the appdb tables
+POSTGRES_APPDB_INGEST_USER=appdb_ingest
+POSTGRES_APPDB_INGEST_PASSWORD=appdb_ingest_password
 
 RATE_LIMITING_ENABLED=False
 LOG_LEVEL=DEBUG
 LOG_JSON=false
 
-OPENSEARCH_URL=http://localhost:9200
+EMBED_API_KEY=
 ```
 
 ### 💾 Database
@@ -113,15 +117,36 @@ cd ../metadata-warehouse
 docker compose up postgres
 ```
 
-To initialize db, run from the `metadata-warehouse` repo:
+To create the empty `appdb`, run from the `metadata-warehouse` repo:
 
 ```sh
-uv run --directory scripts/postgres_data create_db.py --db appdb --reset
+docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" appdb'
+```
+
+Its tables are created from the SQLAlchemy models of [`db_models.py`](src/data_commons_search/db_models.py) and [`dataset_models.py`](src/data_commons_search/dataset_models.py) when missing, by the `create_appdb_tables` task of the `populate_appdb_dataset` DAG. Two roles access `appdb`:
+
+| Role | Env vars | Access |
+| --- | --- | --- |
+| `app` | `POSTGRES_APPDB_SEARCH_USER`, `POSTGRES_APPDB_SEARCH_PASSWORD` | the search API: reads and writes the rows of all the `appdb` tables, through default privileges on the tables the ingest role creates |
+| `appdb_ingest` | `POSTGRES_APPDB_INGEST_USER`, `POSTGRES_APPDB_INGEST_PASSWORD` | the DAGs and `scripts/compute_stats.py`: reads all the warehouse databases (`datasetdb`, `tooldb`, `filedb`, `appdb`), creates (so owns) and writes the `appdb` tables |
+
+Until the metadata-warehouse creates them, create the roles (with the passwords of `keys.env`), their grants and the extensions with [`init_roles.sql`](scripts/init_roles.sql), as the warehouse admin, from the `metadata-warehouse` repo:
+
+```sh
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d appdb -v ON_ERROR_STOP=1 \
+  -v search_user=app -v search_password=... \
+  -v ingest_user=appdb_ingest -v ingest_password=...' < ../data-commons-search/scripts/init_roles.sql
+```
+
+Then create the tables by running the `create_appdb_tables` task of the `populate_appdb_dataset` DAG (it runs at the start of each DAG run, the API needs the user tables before the first one):
+
+```sh
+docker compose exec airflow-worker airflow tasks test populate_appdb_dataset create_appdb_tables
 ```
 
 > [!IMPORTANT]
 >
-> For publicly available environments you will want to update the `app` user password:
+> The password of an existing role is not updated, change it with:
 >
 > ```sql
 > ALTER USER app WITH PASSWORD 'newpassword';
@@ -133,26 +158,18 @@ Reset db:
 docker compose down --volumes --remove-orphans
 ```
 
-Export the schema from `db.py` to the metadata-warehouse (command to run at the root of the data-commons-search repo):
-
-```sh
-uv run scripts/export_db_schema.py ../metadata-warehouse/scripts/postgres_data/create_sql/appdb/tables.sql
-```
-
 ### ⚡️ Start dev server
 
-Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp pointing to a running OpenSearch instance:
+Start the server in dev at http://localhost:8000, with MCP endpoint at http://localhost:8000/mcp searching the `dataset` tables of the `POSTGRES_*` database:
 
 ```sh
 uv run --all-extras uvicorn src.data_commons_search.main:app --reload
 ```
 
-> Default `OPENSEARCH_URL=http://localhost:9200`
-
 Customize server port through environment variable:
 
 ```sh
-OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --reload
+SERVER_PORT=8001 uv run --all-extras uvicorn src.data_commons_search.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 > [!NOTE]
@@ -194,6 +211,18 @@ OPENSEARCH_URL=http://localhost:9200 SERVER_PORT=8001 uv run --all-extras uvicor
 > ```
 >
 > Recommended model: `cesnet/agentic`
+
+### 🔎 Search pipeline
+
+The datasets searched by the API are prepared from the records harvested in `datasetdb` by 3 Airflow DAGs in the [`dags/`](dags) folder, run by the [metadata-warehouse](https://github.com/EOSC-Data-Commons/metadata-warehouse) Airflow. They are chained through Airflow assets: each successful run triggers the next DAG. A task with nothing to hand over is skipped, which stops the pipeline there
+
+Changes in `dags/` are picked up directly, changes in `src/` need a restart of these 2 containers to reinstall the package (`docker compose restart airflow-dag-processor airflow-worker`).
+
+Trigger the dags from the airflow web UI, or CLI:
+
+```sh
+docker compose exec airflow-worker airflow dags trigger populate_appdb_dataset -c '{"full": true, "repositories": ["DASCH", "FINBIF"]}'
+```
 
 ### 🔐 Secrets Store
 
@@ -238,7 +267,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      OPENSEARCH_URL: "http://opensearch:9200"
+      POSTGRES_HOST: "postgres"
       CESNET_API_KEY: "${CESNET_API_KEY}"
       EMBED_API_KEY: "${EMBED_API_KEY}"
 ```
@@ -308,9 +337,9 @@ uv cache clean
 ### 🔧 Maintenance
 
 Pre-compute the stats served by `/stats`: reads the harvested records from `datasetdb` and appends
-a row to the `stats_snapshots` table in `appdb` (same host and credentials, set `DATASETDB_NAME` to
-use another database name). `/stats` then serves the new numbers without a redeploy, and the table
-keeps the history of growth. Requires `POSTGRES_*` credentials that can read `datasetdb`:
+a row to the `stats_snapshots` table in `appdb` (same host, set `DATASETDB_NAME` to use another
+database name). `/stats` then serves the new numbers without a redeploy, and the table keeps the
+history of growth. Runs as the ingest role (`POSTGRES_APPDB_INGEST_USER` and `_PASSWORD`):
 
 ```sh
 uv run --env-file prod.env scripts/compute_stats.py

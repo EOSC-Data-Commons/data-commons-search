@@ -1,7 +1,7 @@
 """Pydantic models for search results and reranking"""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Annotated, Any, Literal
 
 from langchain.messages import AIMessage
@@ -259,6 +259,31 @@ class SearchResults(BaseModel):
 
     total_found: int
     hits: list[SearchHit]
+
+
+class SearchFilters(BaseModel):
+    """Dataset search filters, applied to our search and to the Zenodo federation.
+
+    `start_date`/`end_date` only boost the datasets covering that period (soft), the others are hard
+    filters: a dataset failing one is not returned.
+    """
+
+    start_date: str | None = None
+    end_date: str | None = None
+    # Fuzzy, the closest creator names (typos, accents, word order)
+    creator_name: str | None = None
+    # Any of these subject names, case and accents ignored
+    subjects: list[str] = []
+    # Any of these datasetdb repository codes (e.g. ZENODO)
+    repositories: list[str] = []
+    published_after: date | None = None
+    published_before: date | None = None
+
+    @property
+    def has_hard_filter(self) -> bool:
+        return bool(
+            self.creator_name or self.subjects or self.repositories or self.published_after or self.published_before
+        )
 
 
 ResourceKind = Literal["datasets", "tools"]

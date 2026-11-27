@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from data_commons_search.config import settings
-from data_commons_search.models import SearchHit, SearchResults
+from data_commons_search.models import SearchFilters, SearchHit, SearchResults
 from data_commons_search.utils import logger
 
 ZENODO_API = "https://zenodo.org/api/records"
@@ -101,33 +101,40 @@ def _to_search_hit(record: dict[str, Any], rank: int, total: int) -> SearchHit |
     )
 
 
-def _build_query(search_input: str, start_date: str | None, end_date: str | None, creator_name: str | None) -> str:
+def _phrase(value: str) -> str:
+    """Quoted so a multi-word value stays one phrase rather than several optional terms."""
+    return '"' + value.replace('"', "") + '"'
+
+
+def _build_query(search_input: str, filters: SearchFilters) -> str:
     """Zenodo query string. Their syntax is Lucene-like over `metadata.*` fields, documented at
     https://zenodo.org/help/search - unbounded range ends are written as `*`."""
     parts = [search_input.strip()] if search_input.strip() else []
-    if start_date or end_date:
-        parts.append(f"+metadata.publication_date:[{start_date or '*'} TO {end_date or '*'}]")
-    if creator_name:
+    if filters.start_date or filters.end_date:
+        parts.append(f"+metadata.publication_date:[{filters.start_date or '*'} TO {filters.end_date or '*'}]")
+    if filters.published_after or filters.published_before:
+        start, end = filters.published_after or "*", filters.published_before or "*"
+        parts.append(f"+metadata.publication_date:[{start} TO {end}]")
+    if filters.creator_name:
         # Zenodo indexes InvenioRDM's internal shape, so the searchable creator field is
         # `person_or_org.name` even though the JSON response serializes it as `creators[].name`.
-        # Quoted so a multi-word name stays one phrase rather than several optional terms.
-        parts.append(f'+metadata.creators.person_or_org.name:"{creator_name}"')
+        parts.append(f"+metadata.creators.person_or_org.name:{_phrase(filters.creator_name)}")
+    if filters.subjects:
+        parts.append("+(" + " OR ".join(f"metadata.subjects.subject:{_phrase(s)}" for s in filters.subjects) + ")")
     return " ".join(parts)
 
 
 async def search_zenodo_datasets(
     search_input: str,
     limit: int = 10,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    creator_name: str | None = None,
+    filters: SearchFilters | None = None,
 ) -> SearchResults:
     """Search Zenodo for datasets and return them in our own format.
 
     Never raises: any failure (timeout, rate limit, schema change) is logged and returns no hits, so
     a Zenodo outage can only shrink the result list, never break a search.
     """
-    query = _build_query(search_input, start_date, end_date, creator_name)
+    query = _build_query(search_input, filters or SearchFilters())
     params = {
         "q": query,
         "resource_type": "dataset",
